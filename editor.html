@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Edit Screenshot</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      background: #252525;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .tool {
+      padding: 8px 14px;
+      border-radius: 6px;
+      background: #3a3a3a;
+      color: #ccc;
+      cursor: pointer;
+      font-size: 0.9rem;
+      border: none;
+    }
+    .tool:hover { background: #4a4a4a; }
+    .tool.active { background: #396cd8; color: #fff; }
+    .color-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 3px solid transparent;
+      cursor: pointer;
+    }
+    .color-btn.active { border-color: #fff; }
+    .divider { width: 1px; height: 28px; background: #444; margin: 0 4px; }
+    .spacer { flex: 1; }
+
+    .canvas-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a0a;
+      overflow: hidden;
+    }
+    #editCanvas { cursor: crosshair; }
+
+    .bottom-bar {
+      display: flex;
+      gap: 10px;
+      padding: 12px;
+      background: #252525;
+    }
+    .btn {
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+    }
+    .primary { background: #396cd8; color: white; }
+    .primary:hover { background: #4a7ce8; }
+    .secondary { background: #3a3a3a; color: #aaa; }
+    .secondary:hover { background: #4a4a4a; color: #fff; }
+
+    @media (prefers-color-scheme: light) {
+      body { background: #f0f0f0; color: #0f0f0f; }
+      .toolbar, .bottom-bar { background: #e0e0e0; }
+      .tool { background: #ccc; color: #333; }
+      .canvas-container { background: #fff; }
+    }
+
+    /* Toast notification */
+    #toast {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #34c759;
+      color: #fff;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 500;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s ease, visibility 0.3s ease;
+      z-index: 2000;
+      pointer-events: none;
+    }
+    #toast.show {
+      opacity: 1;
+      visibility: visible;
+    }
+    #toast.error {
+      background: #ff3b30;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="tool active" data-tool="pen">✏️ Pen</button>
+    <button class="tool" data-tool="arrow">➡️ Arrow</button>
+    <button class="tool" data-tool="rect">▢ Rectangle</button>
+    <button class="tool" data-tool="text">T Text</button>
+    <div class="divider"></div>
+    <button class="color-btn active" data-color="#ff3b30" style="background:#ff3b30;"></button>
+    <button class="color-btn" data-color="#007aff" style="background:#007aff;"></button>
+    <button class="color-btn" data-color="#34c759" style="background:#34c759;"></button>
+    <button class="color-btn" data-color="#ffcc00" style="background:#ffcc00;"></button>
+    <button class="color-btn" data-color="#fff" style="background:#fff;"></button>
+    <button class="color-btn" data-color="#000" style="background:#000; border-color:#555;"></button>
+    <div class="divider"></div>
+    <button class="tool" id="undoBtn">↩ Undo</button>
+    <button class="tool" id="clearBtn">🗑 Clear</button>
+    <div class="spacer"></div>
+  </div>
+
+  <div class="canvas-container" style="position:relative;">
+    <canvas id="editCanvas"></canvas>
+  </div>
+
+  <!-- Text input MUST be outside canvas-container to avoid overflow:hidden clipping -->
+  <input type="text" id="textInput" placeholder="Type and press Enter"
+    style="display:none; position:fixed; padding:4px 8px; font-size:24px; font-weight:bold; z-index:1000;
+    border:2px dashed #396cd8; border-radius:4px; background:transparent; color:#fff; outline:none; min-width:100px;" />
+
+  <div class="bottom-bar">
+    <button class="btn primary" id="saveBtn">💾 Save</button>
+    <button class="btn secondary" id="cancelBtn">Cancel</button>
+  </div>
+
+  <!-- Toast notification for copy feedback -->
+  <div id="toast"></div>
+
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+
+    const params = new URLSearchParams(window.location.search);
+    const filepath = params.get('path') || '';
+
+    const canvas = document.getElementById('editCanvas');
+    const ctx = canvas.getContext('2d');
+    const textInput = document.getElementById('textInput');
+
+    let currentTool = 'pen';
+    let currentColor = '#ff3b30';
+    let isDrawing = false;
+    let lastX = 0, lastY = 0;
+    let startX = 0, startY = 0;
+    let history = [];
+    let baseImage = null;
+    let originalWidth = 0, originalHeight = 0;
+    let scaleRatio = 1;
+    let isCommittingText = false;
+
+    // Text objects system - texts are movable until "flattened" on save
+    let textObjects = []; // { id, text, x, y, color }
+    let selectedTextId = null;
+    let editingTextId = null;
+    let isDraggingText = false;
+    let dragOffsetX = 0, dragOffsetY = 0;
+
+    // Load image
+    async function loadImage() {
+      try {
+        const dataUrl = await invoke('read_image_base64', { filepath });
+        const img = new Image();
+        img.onload = () => {
+          baseImage = img;
+          originalWidth = img.width;
+          originalHeight = img.height;
+          resizeCanvas();
+          window.addEventListener('resize', resizeCanvas);
+        };
+        img.src = dataUrl;
+      } catch (e) {
+        console.error('Failed to load image:', e);
+      }
+    }
+
+    function resizeCanvas() {
+      const container = document.querySelector('.canvas-container');
+      const maxW = container.clientWidth - 40;
+      const maxH = container.clientHeight - 40;
+      let w = originalWidth, h = originalHeight;
+      if (w > maxW) { h = h * (maxW / w); w = maxW; }
+      if (h > maxH) { w = w * (maxH / h); h = maxH; }
+      canvas.width = Math.floor(w);
+      canvas.height = Math.floor(h);
+      scaleRatio = canvas.width / originalWidth;
+      drawCanvas();
+      if (history.length === 0) saveState();
+    }
+
+    function drawCanvas() {
+      ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height);
+    }
+
+    // Redraw everything including text objects
+    function redrawAll() {
+      // Restore last saved state (drawing without texts)
+      if (history.length > 0) {
+        ctx.putImageData(history[history.length - 1], 0, 0);
+      } else {
+        drawCanvas();
+      }
+      // Draw all text objects on top
+      textObjects.forEach(t => {
+        ctx.font = 'bold 24px -apple-system, sans-serif';
+        ctx.fillStyle = t.color;
+        ctx.fillText(t.text, t.x, t.y);
+        // Draw selection box if selected
+        if (t.id === selectedTextId) {
+          const metrics = ctx.measureText(t.text);
+          ctx.strokeStyle = '#396cd8';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 2]);
+          ctx.strokeRect(t.x - 4, t.y - 22, metrics.width + 8, 30);
+          ctx.setLineDash([]);
+        }
+      });
+    }
+
+    // Hit test for text objects
+    function getTextAtPoint(x, y) {
+      ctx.font = 'bold 24px -apple-system, sans-serif';
+      for (let i = textObjects.length - 1; i >= 0; i--) {
+        const t = textObjects[i];
+        const metrics = ctx.measureText(t.text);
+        if (x >= t.x - 4 && x <= t.x + metrics.width + 4 &&
+            y >= t.y - 22 && y <= t.y + 8) {
+          return t;
+        }
+      }
+      return null;
+    }
+
+    function saveState() {
+      // Use ImageData for instant restore (no async)
+      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      if (history.length > 30) history.shift();
+    }
+
+    function restoreState(imageData) {
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    // Snapshot before shape drawing (instant, no async)
+    let shapeSnapshot = null;
+
+    // Tool selection
+    document.querySelectorAll('.tool[data-tool]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentTool = btn.dataset.tool;
+        canvas.style.cursor = currentTool === 'text' ? 'text' : 'crosshair';
+      });
+    });
+
+    // Color selection
+    document.querySelectorAll('.color-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentColor = btn.dataset.color;
+      });
+    });
+
+    // Show text input for new or editing text
+    function showTextInput(x, y, existingText = '', color = currentColor) {
+      const canvasRect = canvas.getBoundingClientRect();
+      textInput.style.display = 'block';
+      textInput.style.left = (canvasRect.left + x) + 'px';
+      textInput.style.top = (canvasRect.top + y - 24) + 'px';
+      textInput.style.color = color;
+      textInput.value = existingText;
+      setTimeout(() => { textInput.focus(); textInput.select(); }, 10);
+    }
+
+    // Drawing
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      if (currentTool === 'text') {
+        // Check if clicking on existing text
+        const hitText = getTextAtPoint(x, y);
+        if (hitText) {
+          // Select it and start dragging
+          selectedTextId = hitText.id;
+          isDraggingText = true;
+          dragOffsetX = x - hitText.x;
+          dragOffsetY = y - hitText.y;
+          redrawAll();
+          return;
+        }
+        // Create new text at click position
+        editingTextId = null;
+        selectedTextId = null;
+        showTextInput(x, y);
+        // Store position for new text
+        textInput._newTextX = x;
+        textInput._newTextY = y;
+        return;
+      }
+
+      // Deselect text when using other tools
+      selectedTextId = null;
+      redrawAll();
+
+      isDrawing = true;
+      lastX = startX = x;
+      lastY = startY = y;
+      if (currentTool !== 'pen') {
+        shapeSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      }
+    });
+
+    // Double-click to edit existing text
+    canvas.addEventListener('dblclick', (e) => {
+      if (currentTool !== 'text') return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const hitText = getTextAtPoint(x, y);
+      if (hitText) {
+        editingTextId = hitText.id;
+        showTextInput(hitText.x, hitText.y, hitText.text, hitText.color);
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // Handle text dragging
+      if (isDraggingText && selectedTextId) {
+        const t = textObjects.find(t => t.id === selectedTextId);
+        if (t) {
+          t.x = x - dragOffsetX;
+          t.y = y - dragOffsetY;
+          redrawAll();
+        }
+        return;
+      }
+
+      // Update cursor when hovering over text
+      if (currentTool === 'text') {
+        const hitText = getTextAtPoint(x, y);
+        canvas.style.cursor = hitText ? 'move' : 'text';
+      }
+
+      if (!isDrawing) return;
+
+      if (currentTool === 'pen') {
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        ctx.lineTo(x, y);
+        ctx.strokeStyle = currentColor;
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        lastX = x; lastY = y;
+      } else if (shapeSnapshot) {
+        ctx.putImageData(shapeSnapshot, 0, 0);
+        ctx.strokeStyle = currentColor;
+        ctx.lineWidth = 3;
+        if (currentTool === 'rect') {
+          ctx.strokeRect(startX, startY, x - startX, y - startY);
+        } else if (currentTool === 'arrow') {
+          drawArrow(startX, startY, x, y);
+        }
+      }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      if (isDraggingText) {
+        isDraggingText = false;
+        return;
+      }
+      if (isDrawing) {
+        isDrawing = false;
+        shapeSnapshot = null;
+        saveState();
+        redrawAll(); // Redraw with text objects on top
+      }
+    });
+    canvas.addEventListener('mouseleave', () => { isDrawing = false; shapeSnapshot = null; isDraggingText = false; });
+
+    function drawArrow(fromX, fromY, toX, toY) {
+      const headLen = 15;
+      const angle = Math.atan2(toY - fromY, toX - fromX);
+      ctx.beginPath();
+      ctx.moveTo(fromX, fromY);
+      ctx.lineTo(toX, toY);
+      ctx.lineTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
+      ctx.moveTo(toX, toY);
+      ctx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
+      ctx.stroke();
+    }
+
+    // Text input handling - create or update text object
+    function commitText() {
+      if (isCommittingText) return;
+      isCommittingText = true;
+
+      const text = textInput.value.trim();
+      if (text) {
+        if (editingTextId) {
+          // Update existing text
+          const t = textObjects.find(t => t.id === editingTextId);
+          if (t) {
+            t.text = text;
+            t.color = currentColor;
+          }
+        } else {
+          // Create new text object
+          textObjects.push({
+            id: Date.now(),
+            text: text,
+            x: textInput._newTextX || 100,
+            y: textInput._newTextY || 100,
+            color: currentColor
+          });
+        }
+        redrawAll();
+      }
+      editingTextId = null;
+      textInput.style.display = 'none';
+      textInput.value = '';
+      setTimeout(() => { isCommittingText = false; }, 0);
+    }
+
+    function cancelText() {
+      isCommittingText = true;
+      editingTextId = null;
+      textInput.style.display = 'none';
+      textInput.value = '';
+      setTimeout(() => { isCommittingText = false; }, 0);
+    }
+
+    textInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitText();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelText();
+      }
+    });
+
+    textInput.addEventListener('blur', () => {
+      // Only commit on blur if we're not already handling it via keydown
+      if (!isCommittingText) {
+        commitText();
+      }
+    });
+
+    // Show toast notification
+    function showToast(message, isError = false) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.remove('error');
+      if (isError) toast.classList.add('error');
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 1500);
+    }
+
+    // Create full-resolution canvas with all edits applied and return as Blob
+    function getEditedImageBlob() {
+      // Create full-resolution canvas
+      const saveCanvas = document.createElement('canvas');
+      saveCanvas.width = originalWidth;
+      saveCanvas.height = originalHeight;
+      const saveCtx = saveCanvas.getContext('2d');
+
+      // Scale factor for full resolution
+      const scale = originalWidth / canvas.width;
+
+      // Draw the base edited content
+      saveCtx.drawImage(canvas, 0, 0, originalWidth, originalHeight);
+
+      // Draw text objects at full resolution
+      textObjects.forEach(t => {
+        saveCtx.font = `bold ${Math.round(24 * scale)}px -apple-system, sans-serif`;
+        saveCtx.fillStyle = t.color;
+        saveCtx.fillText(t.text, t.x * scale, t.y * scale);
+      });
+
+      return new Promise(resolve => saveCanvas.toBlob(resolve, 'image/png'));
+    }
+
+    // Copy the edited image to clipboard
+    async function copyEditedImageToClipboard() {
+      // Deselect to remove selection box from render
+      const prevSelected = selectedTextId;
+      selectedTextId = null;
+      redrawAll();
+
+      try {
+        const blob = await getEditedImageBlob();
+        // Convert blob to base64
+        const reader = new FileReader();
+        const base64 = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        
+        // Use Tauri command for native clipboard access
+        await invoke('copy_image_to_clipboard', { base64Data: base64 });
+        showToast('Copied!');
+      } catch (e) {
+        console.error('Copy failed:', e);
+        showToast('Copy failed', true);
+      }
+
+      // Restore selection state (editor stays open)
+      selectedTextId = prevSelected;
+      redrawAll();
+    }
+
+    async function saveEditedScreenshotAndClose() {
+      // Deselect to remove selection box
+      selectedTextId = null;
+      redrawAll();
+
+      try {
+        const blob = await getEditedImageBlob();
+        // Convert blob to base64
+        const reader = new FileReader();
+        const base64 = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        
+        await invoke('save_edited_screenshot', { filepath, base64Data: base64 });
+        await invoke('close_editor_window');
+      } catch (e) {
+        console.error('Save failed:', e);
+      }
+    }
+
+    // Global keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Cmd+C: copy edited image to clipboard
+      if (e.metaKey && e.key === 'c') {
+        // Don't interfere with text input copy
+        if (textInput.style.display === 'block') return;
+        e.preventDefault();
+        void copyEditedImageToClipboard();
+        return;
+      }
+
+      // Enter: save & close editor (unless we're editing a text overlay)
+      if (e.key === 'Enter') {
+        if (textInput.style.display === 'block') return;
+
+        const target = e.target;
+        if (
+          target &&
+          (target.tagName === 'BUTTON' ||
+            target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
+
+        e.preventDefault();
+        void saveEditedScreenshotAndClose();
+        return;
+      }
+
+      // Shift+Tab: go back to rename popup
+      if (e.key === 'Tab' && e.shiftKey) {
+        // Don't navigate away while editing text
+        if (textInput.style.display === 'block') {
+          e.preventDefault();
+          return;
+        }
+        e.preventDefault();
+        void invoke('close_editor_and_open_rename', { filepath }).catch((err) =>
+          console.error('Failed to close editor:', err),
+        );
+        return;
+      }
+
+      // Escape: delete screenshot and close editor
+      if (e.key === 'Escape') {
+        if (textInput.style.display === 'block') return;
+        e.preventDefault();
+        void invoke('delete_screenshot', { filepath }).catch((err) =>
+          console.error('Failed to delete screenshot:', err),
+        );
+        return;
+      }
+
+      // Delete selected text with Delete/Backspace key
+      if (textInput.style.display === 'block') return; // Don't interfere with typing
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTextId) {
+        textObjects = textObjects.filter(t => t.id !== selectedTextId);
+        selectedTextId = null;
+        redrawAll();
+        e.preventDefault();
+      }
+    });
+
+    document.getElementById('undoBtn').addEventListener('click', () => {
+      if (history.length > 1) { history.pop(); restoreState(history[history.length - 1]); }
+      redrawAll();
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      textObjects = [];
+      selectedTextId = null;
+      drawCanvas(); history = []; saveState();
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      await saveEditedScreenshotAndClose();
+    });
+
+    document.getElementById('cancelBtn').addEventListener('click', async () => {
+      // Close editor and return to rename popup (handled by Rust)
+      await invoke('close_editor_and_open_rename', { filepath });
+    });
+
+    loadImage();
+  </script>
+</body>
+</html>

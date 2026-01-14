@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Screenshot</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: transparent;
+      padding: 4px;
+    }
+
+    .group { position: relative; }
+
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #e5e5e5;
+      background: #fff;
+      color: #0f0f0f;
+      font-size: 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+      outline: none;
+      transition: all 0.2s;
+    }
+    input:focus {
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      border-color: #3b82f6;
+    }
+
+    .tooltip {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%) scale(0.95);
+      top: 100%;
+      margin-top: 6px;
+      padding: 6px 12px;
+      background: #0f0f0f;
+      color: #fafafa;
+      font-size: 11px;
+      border-radius: 9999px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+      opacity: 0;
+      transition: all 0.2s;
+    }
+    .tooltip .sep { opacity: 0.4; }
+
+    .group:focus-within .tooltip {
+      opacity: 1;
+      transform: translateX(-50%) scale(1);
+    }
+  </style>
+</head>
+<body>
+  <div class="group">
+    <input type="text" id="nameInput" placeholder="name" autofocus />
+    <div class="tooltip">
+      <span>↵ save</span>
+      <span class="sep">·</span>
+      <span>esc delete</span>
+      <span class="sep">·</span>
+      <span>tab save+edit</span>
+    </div>
+  </div>
+
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+
+    const params = new URLSearchParams(window.location.search);
+    let filepath = params.get('path') || '';
+    const initialFilename = filepath.split('/').pop()?.replace(/\.[^.]+$/, '') || 'screenshot';
+
+    const input = document.getElementById('nameInput');
+
+    // Pre-populate rename input
+    input.value = initialFilename;
+    input.select();
+
+    // Block macOS forbidden filename characters (/ and :)
+    const FORBIDDEN_CHARS = /[/:]/g;
+    input.addEventListener('input', () => {
+      const cursorPos = input.selectionStart;
+      const hadForbidden = FORBIDDEN_CHARS.test(input.value);
+      input.value = input.value.replace(FORBIDDEN_CHARS, '');
+      if (hadForbidden) {
+        input.selectionStart = input.selectionEnd = Math.max(0, cursorPos - 1);
+      }
+    });
+
+    async function saveRenameIfNeeded() {
+      const newName = input.value.trim() || initialFilename;
+      if (newName === initialFilename) return filepath;
+
+      try {
+        const newPath = await invoke('rename_screenshot', { oldPath: filepath, newName });
+        filepath = newPath;
+      } catch (e) {
+        console.error('Rename failed:', e);
+      }
+
+      return filepath;
+    }
+
+    // === ACTIONS ===
+    async function doSave() {
+      await saveRenameIfNeeded();
+      await invoke('close_rename_popup');
+    }
+
+    async function doDelete() {
+      await invoke('delete_screenshot', { filepath });
+    }
+
+    async function openEditor() {
+      // Save typed name first, then open editor on the renamed file
+      const renamedPath = await saveRenameIfNeeded();
+      await invoke('open_editor_window', { filepath: renamedPath });
+    }
+
+    // Global keyboard shortcuts - work when window is focused
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+      else if (e.key === 'Escape') { e.preventDefault(); doDelete(); }
+      else if (e.key === 'Tab') { e.preventDefault(); openEditor(); }
+    });
+  </script>
+</body>
+</html>
