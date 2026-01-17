@@ -1,26 +1,168 @@
 use std::process::Command;
+use std::sync::Mutex;
+use chrono::Local;
+use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::WebviewWindowBuilder,
-    Emitter, Manager, WindowEvent,
+    Emitter, Manager, WindowEvent, State,
 };
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
-fn generate_screenshot_path(extension: &str) -> String {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settings {
+    pub quality: u32,
+    #[serde(rename = "maxWidth")]
+    pub max_width: u32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            quality: 70,
+            max_width: 1280,
+        }
+    }
+}
+
+pub struct AppState {
+    pub settings: Mutex<Settings>,
+}
+
+fn get_settings_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(home).join(".screenshot_app_settings.json")
+}
+
+fn load_settings_from_file() -> Settings {
+    let path = get_settings_path();
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(settings) = serde_json::from_str(&content) {
+                return settings;
+            }
+        }
+    }
+    Settings::default()
+}
+
+fn save_settings_to_file(settings: &Settings) -> Result<(), String> {
+    let path = get_settings_path();
+    let content = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    std::fs::write(&path, content)
+        .map_err(|e| format!("Failed to write settings: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_settings(state: State<AppState>) -> Settings {
+    state.settings.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn save_settings(state: State<AppState>, settings: Settings) -> Result<(), String> {
+    let mut current = state.settings.lock().unwrap();
+    *current = settings.clone();
+    save_settings_to_file(&settings)
+}
+
+fn generate_temp_screenshot_path(extension: &str) -> String {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs();
+        .as_millis();
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    format!("{}/Desktop/screenshot_{}.{}", home, timestamp, extension)
+    format!("{}/Desktop/llm-scr_tmp_{}.{}", home, timestamp, extension)
 }
 
-fn optimize_screenshot(filepath: &str) -> Result<String, String> {
-    // Convert to JPEG with 85% quality and resize to max 1920px width
+fn generate_screenshot_path(extension: &str, settings: &Settings, width: u32, height: u32) -> String {
+    let now = Local::now();
+    let date = now.format("%m-%d");
+    let time = now.format("%H-%M");
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    format!(
+        "{}/Desktop/llm-scr_{}_{}_{}%_{}x{}.{}",
+        home,
+        date,
+        time,
+        settings.quality,
+        width,
+        height,
+        extension
+    )
+}
+
+// Get image dimensions using sips (macOS)
+fn get_image_dimensions(filepath: &str) -> Result<(u32, u32), String> {
+    let output = Command::new("sips")
+        .args(["-g", "pixelWidth", "-g", "pixelHeight", filepath])
+        .output()
+        .map_err(|e| format!("Failed to get image dimensions: {}", e))?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    
+    let width: u32 = output_str
+        .lines()
+        .find(|line| line.contains("pixelWidth"))
+        .and_then(|line| line.split_whitespace().last())
+        .and_then(|w| w.parse().ok())
+        .unwrap_or(800);
+    
+    let height: u32 = output_str
+        .lines()
+        .find(|line| line.contains("pixelHeight"))
+        .and_then(|line| line.split_whitespace().last())
+        .and_then(|h| h.parse().ok())
+        .unwrap_or(600);
+    
+    Ok((width, height))
+}
+
+// Calculate editor window size based on image dimensions and padding
+// Returns (width, height) for the window
+fn calculate_editor_window_size(img_width: u32, img_height: u32, padding: f64) -> (f64, f64) {
+    const TOOLBAR_HEIGHT: f64 = 72.0;
+    
+    // Constraints
+    const MIN_WIDTH: f64 = 500.0;   // Minimum to fit toolbar buttons
+    const MIN_HEIGHT: f64 = 250.0;  // Minimum usable height
+    const MAX_WIDTH: f64 = 1400.0;  // Maximum window width
+    const MAX_HEIGHT: f64 = 900.0;  // Maximum window height
+    
+    let img_w = img_width as f64;
+    let img_h = img_height as f64;
+    
+    // Window wraps tightly around image + padding
+    // Only scale down if image is too large for max window
+    let available_w = MAX_WIDTH - padding;
+    let available_h = MAX_HEIGHT - TOOLBAR_HEIGHT - padding;
+    
+    let (canvas_w, canvas_h) = if img_w <= available_w && img_h <= available_h {
+        // Image fits at 1:1
+        (img_w, img_h)
+    } else {
+        // Scale down to fit max bounds
+        let scale = (available_w / img_w).min(available_h / img_h);
+        (img_w * scale, img_h * scale)
+    };
+    
+    // Window size = canvas + chrome, clamped to min/max
+    let window_w = (canvas_w + padding).max(MIN_WIDTH).min(MAX_WIDTH);
+    let window_h = (canvas_h + TOOLBAR_HEIGHT + padding).max(MIN_HEIGHT).min(MAX_HEIGHT);
+    
+    (window_w, window_h)
+}
+
+// Image optimization: configurable quality and max width via Settings
+// Default: 70% quality, 1280px max width
+// Resizes images wider than max_width to maintain performance
+fn optimize_screenshot(filepath: &str, settings: &Settings) -> Result<String, String> {
+    // Convert to JPEG with configured quality and resize to max width
     let jpeg_path = filepath.replace(".png", ".jpg");
 
-    // Use sips to resize (if wider than 1920px) and convert to JPEG
+    // Use sips to resize (if wider than max_width) and convert to JPEG
     // First, get the width
     let width_output = Command::new("sips")
         .args(["-g", "pixelWidth", filepath])
@@ -35,17 +177,18 @@ fn optimize_screenshot(filepath: &str) -> Result<String, String> {
         .and_then(|w| w.parse().ok())
         .unwrap_or(0);
 
-    // Resize if wider than 1920px
-    if width > 1920 {
+    // Resize if wider than max_width (0 means no resize)
+    if settings.max_width > 0 && width > settings.max_width {
         Command::new("sips")
-            .args(["--resampleWidth", "1920", filepath])
+            .args(["--resampleWidth", &settings.max_width.to_string(), filepath])
             .output()
             .map_err(|e| format!("Failed to resize: {}", e))?;
     }
 
-    // Convert to JPEG with quality 85
+    // Convert to JPEG with configured quality
+    let quality_str = settings.quality.to_string();
     let output = Command::new("sips")
-        .args(["-s", "format", "jpeg", "-s", "formatOptions", "85", filepath, "--out", &jpeg_path])
+        .args(["-s", "format", "jpeg", "-s", "formatOptions", &quality_str, filepath, "--out", &jpeg_path])
         .output()
         .map_err(|e| format!("Failed to convert to JPEG: {}", e))?;
 
@@ -60,13 +203,14 @@ fn optimize_screenshot(filepath: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
+fn take_screenshot(app: tauri::AppHandle, state: State<AppState>) -> Result<String, String> {
     // Block if rename popup is open
     if app.get_webview_window("rename").is_some() {
         return Err("Please finish renaming the current screenshot first".to_string());
     }
 
-    let filepath = generate_screenshot_path("png");
+    let settings = state.settings.lock().unwrap().clone();
+    let filepath = generate_temp_screenshot_path("png");
 
     // Use macOS screencapture command
     // -i = interactive mode (select area)
@@ -79,7 +223,16 @@ fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
     if output.status.success() {
         // Check if file was created (user might have cancelled)
         if std::path::Path::new(&filepath).exists() {
-            optimize_screenshot(&filepath)
+            let optimized_path = optimize_screenshot(&filepath, &settings)?;
+            let (width, height) = get_image_dimensions(&optimized_path)?;
+            let extension = std::path::Path::new(&optimized_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("png");
+            let final_path = generate_screenshot_path(extension, &settings, width, height);
+            std::fs::rename(&optimized_path, &final_path)
+                .map_err(|e| format!("Failed to rename screenshot: {}", e))?;
+            Ok(final_path)
         } else {
             Err("Screenshot cancelled".to_string())
         }
@@ -89,13 +242,14 @@ fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn take_fullscreen_screenshot(app: tauri::AppHandle) -> Result<String, String> {
+fn take_fullscreen_screenshot(app: tauri::AppHandle, state: State<AppState>) -> Result<String, String> {
     // Block if rename popup is open
     if app.get_webview_window("rename").is_some() {
         return Err("Please finish renaming the current screenshot first".to_string());
     }
 
-    let filepath = generate_screenshot_path("png");
+    let settings = state.settings.lock().unwrap().clone();
+    let filepath = generate_temp_screenshot_path("png");
 
     // Use macOS screencapture command
     // -x = no sound (full screen capture, no -i flag)
@@ -105,7 +259,20 @@ fn take_fullscreen_screenshot(app: tauri::AppHandle) -> Result<String, String> {
         .map_err(|e| format!("Failed to run screencapture: {}", e))?;
 
     if output.status.success() {
-        optimize_screenshot(&filepath)
+        if std::path::Path::new(&filepath).exists() {
+            let optimized_path = optimize_screenshot(&filepath, &settings)?;
+            let (width, height) = get_image_dimensions(&optimized_path)?;
+            let extension = std::path::Path::new(&optimized_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("png");
+            let final_path = generate_screenshot_path(extension, &settings, width, height);
+            std::fs::rename(&optimized_path, &final_path)
+                .map_err(|e| format!("Failed to rename screenshot: {}", e))?;
+            Ok(final_path)
+        } else {
+            Err("Screenshot cancelled".to_string())
+        }
     } else {
         Err("Screenshot failed".to_string())
     }
@@ -142,7 +309,16 @@ fn read_image_base64(filepath: String) -> Result<String, String> {
     let bytes = std::fs::read(&filepath)
         .map_err(|e| format!("Failed to read file: {}", e))?;
     let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Ok(format!("data:image/png;base64,{}", base64_data))
+    
+    // Determine MIME type from file extension
+    let mime_type = if filepath.to_lowercase().ends_with(".jpg") 
+        || filepath.to_lowercase().ends_with(".jpeg") {
+        "image/jpeg"
+    } else {
+        "image/png"
+    };
+    
+    Ok(format!("data:{};base64,{}", mime_type, base64_data))
 }
 
 #[tauri::command]
@@ -163,6 +339,8 @@ fn save_edited_screenshot(filepath: String, base64_data: String) -> Result<Strin
     Ok(filepath)
 }
 
+// Rename popup: 340x116 fixed size
+// Compact dimensions for filename input and note field
 #[tauri::command]
 fn open_rename_popup(app: tauri::AppHandle, filepath: String) -> Result<(), String> {
     // URL encode the filepath for the query param
@@ -172,7 +350,7 @@ fn open_rename_popup(app: tauri::AppHandle, filepath: String) -> Result<(), Stri
     // Create compact popup window for renaming with preview
     WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
         .title("Screenshot")
-        .inner_size(340.0, 72.0)
+        .inner_size(340.0, 116.0)
         .resizable(false)
         .always_on_top(true)
         .center()
@@ -211,19 +389,54 @@ fn delete_screenshot(app: tauri::AppHandle, filepath: String) -> Result<(), Stri
     Ok(())
 }
 
+// Calculate padding for the editor based on image dimensions and whether it was resized
+fn calculate_editor_padding(img_width: u32, img_height: u32, was_resized: bool) -> f64 {
+    const TOOLBAR_HEIGHT: f64 = 72.0;
+    const MAX_WIDTH: f64 = 1400.0;
+    const MAX_HEIGHT: f64 = 900.0;
+    const MAX_PADDING: f64 = 40.0;
+    
+    if was_resized {
+        0.0
+    } else {
+        let img_w = img_width as f64;
+        let img_h = img_height as f64;
+        let fill_ratio_w = img_w / (MAX_WIDTH - MAX_PADDING);
+        let fill_ratio_h = img_h / (MAX_HEIGHT - TOOLBAR_HEIGHT - MAX_PADDING);
+        let fill_ratio = fill_ratio_w.max(fill_ratio_h).min(1.0);
+        MAX_PADDING * (1.0 - fill_ratio)
+    }
+}
+
+// Editor window: dynamically sized based on image dimensions
+// Canvas scales within window (see editor.html resizeCanvas)
+// Window size calculated to fit image with toolbar and padding
 #[tauri::command]
-fn open_editor_window(app: tauri::AppHandle, filepath: String) -> Result<(), String> {
+fn open_editor_window(app: tauri::AppHandle, filepath: String, state: State<AppState>) -> Result<(), String> {
     // Close rename popup first
     if let Some(rename_window) = app.get_webview_window("rename") {
         let _ = rename_window.close();
     }
 
+    // Get image dimensions and calculate appropriate window size
+    let (img_width, img_height) = get_image_dimensions(&filepath).unwrap_or((800, 600));
+    
+    // Check if image was resized down by optimize_screenshot
+    // If width matches max_width setting, it was originally larger (fullscreen/large capture)
+    let settings = state.settings.lock().unwrap();
+    let was_resized = settings.max_width > 0 && img_width == settings.max_width;
+    drop(settings);
+    
+    let padding = calculate_editor_padding(img_width, img_height, was_resized);
+    let (window_w, window_h) = calculate_editor_window_size(img_width, img_height, padding);
+
     let encoded_path = urlencoding::encode(&filepath);
-    let url = format!("/editor.html?path={}", encoded_path);
+    let url = format!("/editor.html?path={}&padding={}", encoded_path, padding.round() as i32);
 
     WebviewWindowBuilder::new(&app, "editor", tauri::WebviewUrl::App(url.into()))
         .title("Edit Screenshot")
-        .inner_size(1200.0, 800.0)
+        .inner_size(window_w, window_h)
+        .min_inner_size(500.0, 250.0)
         .resizable(true)
         .center()
         .build()
@@ -245,7 +458,7 @@ fn close_editor_and_open_rename(app: tauri::AppHandle, filepath: String) -> Resu
 
     WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
         .title("Screenshot")
-        .inner_size(340.0, 72.0)
+        .inner_size(340.0, 116.0)
         .resizable(false)
         .always_on_top(true)
         .center()
@@ -318,6 +531,9 @@ pub fn run() {
     let shortcut_full = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit3);
 
     tauri::Builder::default()
+        .manage(AppState {
+            settings: Mutex::new(load_settings_from_file()),
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
@@ -389,7 +605,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard])
+        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, get_settings, save_settings])
         .on_window_event(|window, event| {
             // Only prevent close for main window, let rename popup close normally
             if window.label() == "main" {
