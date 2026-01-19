@@ -15,6 +15,10 @@ pub struct Settings {
     pub quality: u32,
     #[serde(rename = "maxWidth")]
     pub max_width: u32,
+    #[serde(rename = "notePrefixEnabled", default)]
+    pub note_prefix_enabled: bool,
+    #[serde(rename = "notePrefix", default)]
+    pub note_prefix: String,
 }
 
 impl Default for Settings {
@@ -22,6 +26,8 @@ impl Default for Settings {
         Self {
             quality: 70,
             max_width: 1280,
+            note_prefix_enabled: false,
+            note_prefix: String::new(),
         }
     }
 }
@@ -339,8 +345,8 @@ fn save_edited_screenshot(filepath: String, base64_data: String) -> Result<Strin
     Ok(filepath)
 }
 
-// Rename popup: 340x116 fixed size
-// Compact dimensions for filename input and note field
+// Rename popup: 380x140 fixed size
+// Compact dimensions for filename input, note field, and shortcuts bar
 #[tauri::command]
 fn open_rename_popup(app: tauri::AppHandle, filepath: String) -> Result<(), String> {
     // URL encode the filepath for the query param
@@ -350,7 +356,7 @@ fn open_rename_popup(app: tauri::AppHandle, filepath: String) -> Result<(), Stri
     // Create compact popup window for renaming with preview
     WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
         .title("Screenshot")
-        .inner_size(340.0, 116.0)
+        .inner_size(380.0, 140.0)
         .resizable(false)
         .always_on_top(true)
         .center()
@@ -412,7 +418,7 @@ fn calculate_editor_padding(img_width: u32, img_height: u32, was_resized: bool) 
 // Canvas scales within window (see editor.html resizeCanvas)
 // Window size calculated to fit image with toolbar and padding
 #[tauri::command]
-fn open_editor_window(app: tauri::AppHandle, filepath: String, state: State<AppState>) -> Result<(), String> {
+fn open_editor_window(app: tauri::AppHandle, filepath: String, note: Option<String>, state: State<AppState>) -> Result<(), String> {
     // Close rename popup first
     if let Some(rename_window) = app.get_webview_window("rename") {
         let _ = rename_window.close();
@@ -431,7 +437,9 @@ fn open_editor_window(app: tauri::AppHandle, filepath: String, state: State<AppS
     let (window_w, window_h) = calculate_editor_window_size(img_width, img_height, padding);
 
     let encoded_path = urlencoding::encode(&filepath);
-    let url = format!("/editor.html?path={}&padding={}", encoded_path, padding.round() as i32);
+    let note_value = note.unwrap_or_default();
+    let encoded_note = urlencoding::encode(&note_value);
+    let url = format!("/editor.html?path={}&padding={}&note={}", encoded_path, padding.round() as i32, encoded_note);
 
     WebviewWindowBuilder::new(&app, "editor", tauri::WebviewUrl::App(url.into()))
         .title("Edit Screenshot")
@@ -446,15 +454,17 @@ fn open_editor_window(app: tauri::AppHandle, filepath: String, state: State<AppS
 }
 
 #[tauri::command]
-fn close_editor_and_open_rename(app: tauri::AppHandle, filepath: String) -> Result<(), String> {
+fn close_editor_and_open_rename(app: tauri::AppHandle, filepath: String, note: Option<String>) -> Result<(), String> {
     // Close editor window first
     if let Some(editor_window) = app.get_webview_window("editor") {
         let _ = editor_window.close();
     }
 
-    // Open rename popup
+    // Open rename popup with note preserved
     let encoded_path = urlencoding::encode(&filepath);
-    let url = format!("/rename.html?path={}", encoded_path);
+    let note_value = note.unwrap_or_default();
+    let encoded_note = urlencoding::encode(&note_value);
+    let url = format!("/rename.html?path={}&note={}", encoded_path, encoded_note);
 
     WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
         .title("Screenshot")
@@ -521,6 +531,105 @@ fn copy_image_to_clipboard(base64_data: String) -> Result<(), String> {
         .set_image(img_data)
         .map_err(|e| format!("Failed to copy image to clipboard: {}", e))?;
 
+    Ok(())
+}
+
+#[tauri::command]
+fn copy_file_to_clipboard(filepath: String) -> Result<(), String> {
+    use arboard::{Clipboard, ImageData};
+    use std::fs::File;
+    use std::io::BufReader;
+    
+    let file = File::open(&filepath)
+        .map_err(|e| format!("Failed to open file: {}", e))?;
+    let reader = BufReader::new(file);
+    
+    // Detect format by extension
+    let is_jpeg = filepath.to_lowercase().ends_with(".jpg") 
+        || filepath.to_lowercase().ends_with(".jpeg");
+    
+    let (width, height, rgba_data) = if is_jpeg {
+        // Decode JPEG
+        let mut decoder = jpeg_decoder::Decoder::new(reader);
+        let pixels = decoder.decode()
+            .map_err(|e| format!("Failed to decode JPEG: {}", e))?;
+        let info = decoder.info().ok_or("Failed to get JPEG info")?;
+        
+        // Convert to RGBA
+        let rgba = match info.pixel_format {
+            jpeg_decoder::PixelFormat::RGB24 => {
+                let mut rgba = Vec::with_capacity(pixels.len() / 3 * 4);
+                for chunk in pixels.chunks(3) {
+                    rgba.extend_from_slice(chunk);
+                    rgba.push(255);
+                }
+                rgba
+            }
+            jpeg_decoder::PixelFormat::L8 => {
+                let mut rgba = Vec::with_capacity(pixels.len() * 4);
+                for &gray in &pixels {
+                    rgba.extend_from_slice(&[gray, gray, gray, 255]);
+                }
+                rgba
+            }
+            _ => return Err("Unsupported JPEG pixel format".to_string()),
+        };
+        
+        (info.width as usize, info.height as usize, rgba)
+    } else {
+        // Decode PNG
+        let decoder = png::Decoder::new(reader);
+        let mut reader = decoder.read_info()
+            .map_err(|e| format!("Failed to read PNG info: {}", e))?;
+        
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf)
+            .map_err(|e| format!("Failed to decode PNG frame: {}", e))?;
+        
+        let rgba = match info.color_type {
+            png::ColorType::Rgba => buf[..info.buffer_size()].to_vec(),
+            png::ColorType::Rgb => {
+                let rgb = &buf[..info.buffer_size()];
+                let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
+                for chunk in rgb.chunks(3) {
+                    rgba.extend_from_slice(chunk);
+                    rgba.push(255);
+                }
+                rgba
+            }
+            png::ColorType::Grayscale => {
+                let gray = &buf[..info.buffer_size()];
+                let mut rgba = Vec::with_capacity(gray.len() * 4);
+                for &g in gray {
+                    rgba.extend_from_slice(&[g, g, g, 255]);
+                }
+                rgba
+            }
+            png::ColorType::GrayscaleAlpha => {
+                let ga = &buf[..info.buffer_size()];
+                let mut rgba = Vec::with_capacity(ga.len() * 2);
+                for chunk in ga.chunks(2) {
+                    rgba.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
+                }
+                rgba
+            }
+            _ => return Err(format!("Unsupported PNG color type: {:?}", info.color_type)),
+        };
+        
+        (info.width as usize, info.height as usize, rgba)
+    };
+    
+    let img_data = ImageData {
+        width,
+        height,
+        bytes: rgba_data.into(),
+    };
+    
+    let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {}", e))?;
+    clipboard
+        .set_image(img_data)
+        .map_err(|e| format!("Failed to copy image to clipboard: {}", e))?;
+    
     Ok(())
 }
 
@@ -605,7 +714,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, get_settings, save_settings])
+        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, get_settings, save_settings])
         .on_window_event(|window, event| {
             // Only prevent close for main window, let rename popup close normally
             if window.label() == "main" {
