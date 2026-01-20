@@ -11,14 +11,53 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilenameBlock {
+    pub id: String,
+    pub enabled: bool,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilenameTemplate {
+    pub blocks: Vec<FilenameBlock>,
+    pub use_counter: bool,
+}
+
+impl Default for FilenameTemplate {
+    fn default() -> Self {
+        Self {
+            blocks: vec![
+                FilenameBlock { id: "prefix".to_string(), enabled: true, value: Some("llm-scr".to_string()) },
+                FilenameBlock { id: "date".to_string(), enabled: true, value: None },
+                FilenameBlock { id: "time".to_string(), enabled: true, value: None },
+                FilenameBlock { id: "quality".to_string(), enabled: true, value: None },
+                FilenameBlock { id: "dimensions".to_string(), enabled: true, value: None },
+                FilenameBlock { id: "counter".to_string(), enabled: false, value: None },
+            ],
+            use_counter: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub quality: u32,
-    #[serde(rename = "maxWidth")]
     pub max_width: u32,
-    #[serde(rename = "notePrefixEnabled", default)]
+    #[serde(default)]
     pub note_prefix_enabled: bool,
-    #[serde(rename = "notePrefix", default)]
+    #[serde(default)]
     pub note_prefix: String,
+    #[serde(default)]
+    pub filename_template: FilenameTemplate,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "system".to_string()
 }
 
 impl Default for Settings {
@@ -28,6 +67,8 @@ impl Default for Settings {
             max_width: 1280,
             note_prefix_enabled: false,
             note_prefix: String::new(),
+            filename_template: FilenameTemplate::default(),
+            theme: "system".to_string(),
         }
     }
 }
@@ -85,19 +126,52 @@ fn generate_temp_screenshot_path(extension: &str) -> String {
 
 fn generate_screenshot_path(extension: &str, settings: &Settings, width: u32, height: u32) -> String {
     let now = Local::now();
-    let date = now.format("%m-%d");
-    let time = now.format("%H-%M");
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    format!(
-        "{}/Desktop/llm-scr_{}_{}_{}%_{}x{}.{}",
-        home,
-        date,
-        time,
-        settings.quality,
-        width,
-        height,
-        extension
-    )
+    let template = &settings.filename_template;
+    
+    let mut parts: Vec<String> = Vec::new();
+    
+    for block in &template.blocks {
+        if !block.enabled {
+            continue;
+        }
+        
+        let part = match block.id.as_str() {
+            "prefix" => block.value.clone().unwrap_or_else(|| "llm-scr".to_string()),
+            "date" => now.format("%m-%d").to_string(),
+            "time" => now.format("%H-%M-%S").to_string(),
+            "quality" => format!("{}%", settings.quality),
+            "dimensions" => format!("{}x{}", width, height),
+            "counter" => String::new(), // handled separately below
+            _ => continue,
+        };
+        
+        if block.id != "counter" && !part.is_empty() {
+            parts.push(part);
+        }
+    }
+    
+    let base_name = parts.join("_");
+    let counter_enabled = template.blocks.iter().any(|b| b.id == "counter" && b.enabled);
+    
+    if counter_enabled || template.use_counter {
+        // Use counter for uniqueness
+        let mut counter = 1u32;
+        loop {
+            let filename = if counter == 1 {
+                format!("{}/Desktop/{}.{}", home, base_name, extension)
+            } else {
+                format!("{}/Desktop/{}_{}.{}", home, base_name, counter, extension)
+            };
+            
+            if !std::path::Path::new(&filename).exists() {
+                return filename;
+            }
+            counter += 1;
+        }
+    } else {
+        format!("{}/Desktop/{}.{}", home, base_name, extension)
+    }
 }
 
 // Get image dimensions using sips (macOS)
@@ -356,7 +430,7 @@ fn open_rename_popup(app: tauri::AppHandle, filepath: String) -> Result<(), Stri
     // Create compact popup window for renaming with preview
     WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
         .title("Screenshot")
-        .inner_size(380.0, 140.0)
+        .inner_size(410.0, 141.0)
         .resizable(false)
         .always_on_top(true)
         .center()
@@ -468,7 +542,7 @@ fn close_editor_and_open_rename(app: tauri::AppHandle, filepath: String, note: O
 
     WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
         .title("Screenshot")
-        .inner_size(340.0, 116.0)
+        .inner_size(410.0, 141.0)
         .resizable(false)
         .always_on_top(true)
         .center()
@@ -638,6 +712,7 @@ pub fn run() {
     // Define the shortcuts
     let shortcut_area = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit4);
     let shortcut_full = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit3);
+    let shortcut_focus_rename = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyF);
 
     tauri::Builder::default()
         .manage(AppState {
@@ -648,7 +723,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([shortcut_area, shortcut_full])
+                .with_shortcuts([shortcut_area, shortcut_full, shortcut_focus_rename])
                 .unwrap()
                 .with_handler(move |app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
@@ -658,6 +733,12 @@ pub fn run() {
                         } else if shortcut.key == Code::Digit3 {
                             // Cmd+Shift+3: Full screen screenshot
                             let _ = app.emit("take-fullscreen-screenshot", ());
+                        } else if shortcut.key == Code::KeyF {
+                            // Cmd+Shift+F: Focus rename window
+                            if let Some(window) = app.get_webview_window("rename") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
                         }
                     }
                 })

@@ -8,77 +8,136 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; overflow: hidden; }
     body {
+      --editor-bg: linear-gradient(135deg, #2b4f74 0%, #1f6b6f 48%, #6b6862 100%);
+      --editor-bg-glow: radial-gradient(110% 140% at 12% 18%, rgba(84, 120, 175, 0.55) 0%, rgba(29, 75, 96, 0.25) 45%, rgba(0, 0, 0, 0) 70%);
+      --editor-bg-mist: radial-gradient(120% 120% at 88% 30%, rgba(24, 97, 125, 0.35) 0%, rgba(0, 0, 0, 0) 55%);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #1a1a1a;
+      background: var(--editor-bg-glow), var(--editor-bg-mist), var(--editor-bg);
       color: #fff;
       display: flex;
       flex-direction: column;
     }
 
-    .toolbar {
+    .toolbar-wrapper {
+      background: var(--editor-bg-glow), var(--editor-bg-mist), var(--editor-bg);
+      padding: 4px 0;
       display: flex;
-      gap: 8px;
-      padding: 12px;
-      background: #252525;
-      flex-wrap: wrap;
+      flex-direction: column;
       align-items: center;
+      backdrop-filter: blur(6px);
+    }
+    .toolbar {
+      display: inline-flex;
+      gap: 3px;
+      padding: 6px 8px;
+      background: var(--editor-bg-glow), var(--editor-bg-mist), var(--editor-bg);
+      border-radius: 8px;
+      align-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
+      backdrop-filter: blur(8px);
     }
     .tool {
-      padding: 8px 14px;
+      width: 32px;
+      height: 32px;
       border-radius: 6px;
-      background: #3a3a3a;
-      color: #ccc;
+      background: transparent;
+      color: #111;
       cursor: pointer;
-      font-size: 0.9rem;
       border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, color 0.15s;
     }
-    .tool:hover { background: #4a4a4a; }
+    .tool:hover { background: #4a4a4a; color: #fff; }
     .tool.active { background: #396cd8; color: #fff; }
-    .color-btn {
-      width: 28px;
-      height: 28px;
+    .tool svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2.25; }
+    .color-indicator {
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
-      border: 3px solid transparent;
       cursor: pointer;
+      border: 2px solid transparent;
+      transition: border-color 0.15s;
     }
-    .color-btn.active { border-color: #fff; }
-    .divider { width: 1px; height: 28px; background: #444; margin: 0 4px; }
+    .color-indicator:hover, .color-indicator.open { border-color: rgba(255,255,255,0.5); }
+    .divider { width: 1px; height: 18px; background: #555; margin: 0 4px; }
     .spacer { flex: 1; }
+    .save-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 7px;
+      background: #396cd8;
+      color: #fff;
+      cursor: pointer;
+      border: none;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .save-btn:hover { background: #4a7ce8; }
+    .save-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2.25; }
+
+    /* Color picker dropdown */
+    .color-picker-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .color-picker {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 8px;
+      padding: 10px 14px;
+      background: #3a3a3a;
+      border-radius: 24px;
+      gap: 8px;
+      z-index: 100;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    .color-picker.open { display: flex; }
+    .color-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: transform 0.1s, border-color 0.15s;
+    }
+    .color-btn:hover { transform: scale(1.1); }
+    .color-btn.active { border-color: rgba(255,255,255,0.8); }
+    .color-btn.focused { outline: 2px solid #396cd8; outline-offset: 2px; }
 
     .canvas-container {
       flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #0a0a0a;
+      background: transparent;
       overflow: hidden;
     }
     #editCanvas { cursor: crosshair; }
 
-    .bottom-bar {
-      display: flex;
-      gap: 10px;
-      padding: 12px;
-      background: #252525;
-    }
-    .btn {
-      padding: 10px 24px;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-weight: 500;
-      cursor: pointer;
-      border: none;
-    }
-    .primary { background: #396cd8; color: white; }
-    .primary:hover { background: #4a7ce8; }
-    .secondary { background: #3a3a3a; color: #aaa; }
-    .secondary:hover { background: #4a4a4a; color: #fff; }
-
     @media (prefers-color-scheme: light) {
-      body { background: #f0f0f0; color: #0f0f0f; }
-      .toolbar, .bottom-bar { background: #e0e0e0; }
-      .tool { background: #ccc; color: #333; }
-      .canvas-container { background: #fff; }
+      body {
+        --editor-bg-glow: radial-gradient(110% 140% at 12% 18%, rgba(123, 150, 196, 0.45) 0%, rgba(90, 144, 150, 0.25) 45%, rgba(0, 0, 0, 0) 70%);
+        --editor-bg-mist: radial-gradient(120% 120% at 88% 30%, rgba(96, 146, 164, 0.25) 0%, rgba(0, 0, 0, 0) 55%);
+        color: #0f0f0f;
+      }
+      .toolbar-wrapper { background: var(--editor-bg-glow), var(--editor-bg-mist), var(--editor-bg); }
+      .toolbar {
+        background: var(--editor-bg-glow), var(--editor-bg-mist), var(--editor-bg);
+        border-color: rgba(0, 0, 0, 0.1);
+        box-shadow: 0 6px 14px rgba(0, 0, 0, 0.12);
+      }
+      .tool { color: #111; }
+      .tool:hover { background: #c0c0c0; color: #000; }
+      .color-picker { background: #d0d0d0; }
     }
 
     /* Toast notification */
@@ -109,22 +168,61 @@
   </style>
 </head>
 <body>
-  <div class="toolbar">
-    <button class="tool active" data-tool="pen">✏️ Pen</button>
-    <button class="tool" data-tool="arrow">➡️ Arrow</button>
-    <button class="tool" data-tool="rect">▢ Rectangle</button>
-    <button class="tool" data-tool="text">T Text</button>
-    <div class="divider"></div>
-    <button class="color-btn active" data-color="#ff3b30" style="background:#ff3b30;"></button>
-    <button class="color-btn" data-color="#007aff" style="background:#007aff;"></button>
-    <button class="color-btn" data-color="#34c759" style="background:#34c759;"></button>
-    <button class="color-btn" data-color="#ffcc00" style="background:#ffcc00;"></button>
-    <button class="color-btn" data-color="#fff" style="background:#fff;"></button>
-    <button class="color-btn" data-color="#000" style="background:#000; border-color:#555;"></button>
-    <div class="divider"></div>
-    <button class="tool" id="undoBtn">↩ Undo</button>
-    <button class="tool" id="clearBtn">🗑 Clear</button>
-    <div class="spacer"></div>
+  <div class="toolbar-wrapper">
+    <div class="toolbar">
+      <!-- Pen -->
+      <button class="tool active" data-tool="pen" title="Pen (W)">
+        <svg viewBox="0 0 24 24"><path d="M3 21l3.5-1L20.5 6l-2.5-2.5L4 17.5 3 21z"/><path d="M15 5l4 4"/></svg>
+      </button>
+      <!-- Arrow -->
+      <button class="tool" data-tool="arrow" title="Arrow (A)">
+        <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+      <!-- Rectangle -->
+      <button class="tool" data-tool="rect" title="Rectangle (R)">
+        <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
+      </button>
+      <!-- Circle -->
+      <button class="tool" data-tool="circle" title="(E)llipse (Shift for Circle)">
+        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>
+      </button>
+      <!-- Text -->
+      <button class="tool" data-tool="text" title="Text (T)">
+        <svg viewBox="0 0 24 24"><path d="M5 7V5h14v2M12 5v14M9 19h6"/></svg>
+      </button>
+      <div class="divider"></div>
+      <!-- Color picker -->
+      <div class="color-picker-container">
+        <button class="color-indicator" id="colorToggle" style="background:#ff3b30;" title="Colors (K)"></button>
+        <div class="color-picker" id="colorPicker">
+          <button class="color-btn active" data-color="#ff3b30" style="background:#ff3b30;" tabindex="-1"></button>
+          <button class="color-btn" data-color="#007aff" style="background:#007aff;" tabindex="-1"></button>
+          <button class="color-btn" data-color="#34c759" style="background:#34c759;" tabindex="-1"></button>
+          <button class="color-btn" data-color="#ffcc00" style="background:#ffcc00;" tabindex="-1"></button>
+          <button class="color-btn" data-color="#fff" style="background:#fff;" tabindex="-1"></button>
+          <button class="color-btn" data-color="#000" style="background:#000;" tabindex="-1"></button>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <!-- Undo -->
+      <button class="tool" id="undoBtn" title="Undo (Cmd+Z)">
+        <svg viewBox="0 0 24 24"><path d="M3 10h10a5 5 0 0 1 5 5v2"/><path d="M7 6l-4 4 4 4"/></svg>
+      </button>
+      <!-- Delete/Clear -->
+      <button class="tool" id="clearBtn" title="Clear">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M9 6V4h6v2M6 6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6M10 10v6M14 10v6"/></svg>
+      </button>
+      <div class="divider"></div>
+      <!-- Close -->
+      <button class="tool" id="cancelBtn" title="Cancel (Esc)">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg>
+      </button>
+      <!-- Save button -->
+      <button class="save-btn" id="saveBtn" title="Save (Enter)">
+        <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        Save
+      </button>
+    </div>
   </div>
 
   <div class="canvas-container" style="position:relative;">
@@ -136,10 +234,6 @@
     style="display:none; position:fixed; padding:4px 8px; font-size:24px; font-weight:bold; z-index:1000;
     border:2px dashed #396cd8; border-radius:4px; background:transparent; color:#fff; outline:none; min-width:100px;" />
 
-  <div class="bottom-bar">
-    <button class="btn primary" id="saveBtn">💾 Save</button>
-    <button class="btn secondary" id="cancelBtn">Cancel</button>
-  </div>
 
   <!-- Toast notification for copy feedback -->
   <div id="toast"></div>
@@ -149,6 +243,12 @@
 
     const params = new URLSearchParams(window.location.search);
     const filepath = params.get('path') || '';
+    const editorPadding = parseInt(params.get('padding') || '40', 10);
+    const pendingNote = params.get('note') || '';
+
+    // Load settings for prefix
+    let settings = { quality: 70, maxWidth: 1280, notePrefixEnabled: false, notePrefix: '' };
+    invoke('get_settings').then(s => { settings = s; }).catch(console.error);
 
     const canvas = document.getElementById('editCanvas');
     const ctx = canvas.getContext('2d');
@@ -165,22 +265,136 @@
     let scaleRatio = 1;
     let isCommittingText = false;
 
+    // Offscreen edit layer at original resolution - fixes resize issues
+    let editLayer = null;
+    let editCtx = null;
+
+    // Wrap text helper for note compositing
+    function wrapText(text, maxWidth, context) {
+      if (!text) return [''];
+      const words = text.split(/\s+/).filter(Boolean);
+      if (words.length === 0) return [''];
+      const lines = [];
+      let currentLine = '';
+      const splitLongWord = (word) => {
+        let segment = '';
+        for (const char of word) {
+          const testSegment = segment + char;
+          if (context.measureText(testSegment).width <= maxWidth) {
+            segment = testSegment;
+          } else {
+            if (segment) lines.push(segment);
+            segment = char;
+          }
+        }
+        return segment;
+      };
+      words.forEach((word) => {
+        const nextLine = currentLine ? `${currentLine} ${word}` : word;
+        if (context.measureText(nextLine).width <= maxWidth) {
+          currentLine = nextLine;
+          return;
+        }
+        if (currentLine) {
+          lines.push(currentLine);
+          currentLine = '';
+        }
+        if (context.measureText(word).width <= maxWidth) {
+          currentLine = word;
+        } else {
+          currentLine = splitLongWord(word);
+        }
+      });
+      if (currentLine) lines.push(currentLine);
+      return lines.length ? lines : [''];
+    }
+
+    // Build a canvas with the note burned into the bottom of the image
+    function buildNotedBaseCanvas(img, note) {
+      // Prepend prefix if enabled
+      const finalNote = (settings.notePrefixEnabled && settings.notePrefix) 
+        ? settings.notePrefix + note 
+        : note;
+
+      const MIN_NOTE_WIDTH = 400;
+      const MAX_CHAR_LIMIT = 1000;
+      const FONT_SIZE = Math.max(12, Math.min(20, img.width * 0.02));
+      const PADDING = Math.max(8, Math.min(16, img.width * 0.015));
+      const LINE_HEIGHT = 1.4;
+
+      const displayNote = finalNote.slice(0, MAX_CHAR_LIMIT);
+      const effectiveWidth = Math.max(img.width, MIN_NOTE_WIDTH);
+      const availableTextWidth = effectiveWidth - PADDING * 2;
+
+      const measureCanvas = document.createElement('canvas');
+      const mctx = measureCanvas.getContext('2d');
+      mctx.font = `${FONT_SIZE}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+
+      const lines = wrapText(displayNote, availableTextWidth, mctx);
+      const lineHeight = FONT_SIZE * LINE_HEIGHT;
+      const noteBarHeight = Math.ceil(lines.length * lineHeight + PADDING * 2);
+
+      const c = document.createElement('canvas');
+      c.width = effectiveWidth;
+      c.height = img.height + noteBarHeight;
+
+      const cctx = c.getContext('2d');
+      const xOffset = (c.width - img.width) / 2;
+      if (xOffset > 0) {
+        cctx.fillStyle = '#f2f2f2';
+        cctx.fillRect(0, 0, c.width, c.height);
+      }
+      cctx.drawImage(img, xOffset, 0, img.width, img.height);
+
+      cctx.fillStyle = '#ffffff';
+      cctx.fillRect(0, img.height, c.width, noteBarHeight);
+
+      cctx.fillStyle = '#000000';
+      cctx.font = `${FONT_SIZE}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+      cctx.textBaseline = 'top';
+
+      lines.forEach((line, i) => {
+        const y = img.height + PADDING + i * lineHeight;
+        cctx.fillText(line, PADDING, y);
+      });
+
+      return c;
+    }
+
     // Text objects system - texts are movable until "flattened" on save
     let textObjects = []; // { id, text, x, y, color }
     let selectedTextId = null;
     let editingTextId = null;
     let isDraggingText = false;
     let dragOffsetX = 0, dragOffsetY = 0;
+    let isShiftPressed = false;
 
-    // Load image
+    // Load image (with pending note composited if present)
     async function loadImage() {
       try {
         const dataUrl = await invoke('read_image_base64', { filepath });
         const img = new Image();
         img.onload = () => {
-          baseImage = img;
-          originalWidth = img.width;
-          originalHeight = img.height;
+          // If there's a pending note, composite it into the base image
+          if (pendingNote) {
+            const notedCanvas = buildNotedBaseCanvas(img, pendingNote);
+            baseImage = notedCanvas;
+            originalWidth = notedCanvas.width;
+            originalHeight = notedCanvas.height;
+          } else {
+            baseImage = img;
+            originalWidth = img.width;
+            originalHeight = img.height;
+          }
+          
+          // Create offscreen edit layer at original resolution
+          editLayer = document.createElement('canvas');
+          editLayer.width = originalWidth;
+          editLayer.height = originalHeight;
+          editCtx = editLayer.getContext('2d');
+          // Start with transparent layer
+          editCtx.clearRect(0, 0, originalWidth, originalHeight);
+          
           resizeCanvas();
           window.addEventListener('resize', resizeCanvas);
         };
@@ -192,15 +406,15 @@
 
     function resizeCanvas() {
       const container = document.querySelector('.canvas-container');
-      const maxW = container.clientWidth - 40;
-      const maxH = container.clientHeight - 40;
+      const maxW = container.clientWidth - editorPadding;
+      const maxH = container.clientHeight - editorPadding;
       let w = originalWidth, h = originalHeight;
       if (w > maxW) { h = h * (maxW / w); w = maxW; }
       if (h > maxH) { w = w * (maxH / h); h = maxH; }
       canvas.width = Math.floor(w);
       canvas.height = Math.floor(h);
       scaleRatio = canvas.width / originalWidth;
-      drawCanvas();
+      redrawAll();
       if (history.length === 0) saveState();
     }
 
@@ -209,38 +423,52 @@
     }
 
     // Redraw everything including text objects
+    // All coordinates are in original image space, scaled to display
     function redrawAll() {
-      // Restore last saved state (drawing without texts)
-      if (history.length > 0) {
-        ctx.putImageData(history[history.length - 1], 0, 0);
-      } else {
-        drawCanvas();
+      if (!baseImage) return;
+      
+      // Clear and draw base image scaled to canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height);
+      
+      // Draw edit layer scaled to canvas (contains pen/arrow/rect annotations)
+      if (editLayer) {
+        ctx.drawImage(editLayer, 0, 0, canvas.width, canvas.height);
       }
-      // Draw all text objects on top
+      
+      // Draw all text objects on top (coordinates in image space, scaled for display)
+      const fontSizeBase = 24;
       textObjects.forEach(t => {
-        ctx.font = 'bold 24px -apple-system, sans-serif';
+        const scaledFontSize = fontSizeBase * scaleRatio;
+        ctx.font = `bold ${scaledFontSize}px -apple-system, sans-serif`;
         ctx.fillStyle = t.color;
-        ctx.fillText(t.text, t.x, t.y);
+        ctx.fillText(t.text, t.x * scaleRatio, t.y * scaleRatio);
         // Draw selection box if selected
         if (t.id === selectedTextId) {
           const metrics = ctx.measureText(t.text);
           ctx.strokeStyle = '#396cd8';
           ctx.lineWidth = 1;
           ctx.setLineDash([4, 2]);
-          ctx.strokeRect(t.x - 4, t.y - 22, metrics.width + 8, 30);
+          const boxX = t.x * scaleRatio - 4;
+          const boxY = t.y * scaleRatio - 22 * scaleRatio;
+          ctx.strokeRect(boxX, boxY, metrics.width + 8, 30 * scaleRatio);
           ctx.setLineDash([]);
         }
       });
     }
 
-    // Hit test for text objects
-    function getTextAtPoint(x, y) {
-      ctx.font = 'bold 24px -apple-system, sans-serif';
+    // Hit test for text objects (x, y in canvas space, converted to image space)
+    function getTextAtPoint(canvasX, canvasY) {
+      const imgX = canvasX / scaleRatio;
+      const imgY = canvasY / scaleRatio;
+      const fontSizeBase = 24;
+      // Use original resolution for measurement
+      editCtx.font = `bold ${fontSizeBase}px -apple-system, sans-serif`;
       for (let i = textObjects.length - 1; i >= 0; i--) {
         const t = textObjects[i];
-        const metrics = ctx.measureText(t.text);
-        if (x >= t.x - 4 && x <= t.x + metrics.width + 4 &&
-            y >= t.y - 22 && y <= t.y + 8) {
+        const metrics = editCtx.measureText(t.text);
+        if (imgX >= t.x - 4 && imgX <= t.x + metrics.width + 4 &&
+            imgY >= t.y - 22 && imgY <= t.y + 8) {
           return t;
         }
       }
@@ -248,44 +476,108 @@
     }
 
     function saveState() {
-      // Use ImageData for instant restore (no async)
-      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      // Save edit layer at original resolution (not display canvas)
+      if (!editCtx) return;
+      const pixels = editCtx.getImageData(0, 0, originalWidth, originalHeight);
+      const clonedTextObjects = structuredClone(textObjects);
+      history.push({ pixels, textObjects: clonedTextObjects });
       if (history.length > 30) history.shift();
     }
 
-    function restoreState(imageData) {
-      ctx.putImageData(imageData, 0, 0);
+    function restoreState(state) {
+      // Restore to edit layer, then redraw
+      if (!editCtx) return;
+      editCtx.putImageData(state.pixels, 0, 0);
+      // Deep-clone textObjects to avoid mutating history snapshots
+      textObjects = structuredClone(state.textObjects);
     }
 
     // Snapshot before shape drawing (instant, no async)
     let shapeSnapshot = null;
 
+    function setCurrentTool(tool) {
+      currentTool = tool;
+      document.querySelectorAll('.tool[data-tool]').forEach(b => {
+        b.classList.toggle('active', b.dataset.tool === tool);
+      });
+      canvas.style.cursor = currentTool === 'text' ? 'text' : 'crosshair';
+    }
+
     // Tool selection
     document.querySelectorAll('.tool[data-tool]').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentTool = btn.dataset.tool;
-        canvas.style.cursor = currentTool === 'text' ? 'text' : 'crosshair';
+        setCurrentTool(btn.dataset.tool);
       });
     });
 
-    // Color selection
-    document.querySelectorAll('.color-btn').forEach(btn => {
+    // Color picker state
+    const colorToggle = document.getElementById('colorToggle');
+    const colorPicker = document.getElementById('colorPicker');
+    const colorBtns = document.querySelectorAll('.color-btn');
+    let colorPickerOpen = false;
+    let colorFocusIndex = 0;
+
+    function openColorPicker() {
+      colorPickerOpen = true;
+      colorPicker.classList.add('open');
+      colorToggle.classList.add('open');
+      updateColorFocus();
+    }
+
+    function closeColorPicker() {
+      colorPickerOpen = false;
+      colorPicker.classList.remove('open');
+      colorToggle.classList.remove('open');
+      colorBtns.forEach(b => b.classList.remove('focused'));
+    }
+
+    function toggleColorPicker() {
+      if (colorPickerOpen) closeColorPicker();
+      else openColorPicker();
+    }
+
+    function updateColorFocus() {
+      colorBtns.forEach((b, i) => {
+        b.classList.toggle('focused', i === colorFocusIndex);
+      });
+    }
+
+    function selectColor(index) {
+      colorBtns.forEach(b => b.classList.remove('active'));
+      const btn = colorBtns[index];
+      btn.classList.add('active');
+      currentColor = btn.dataset.color;
+      colorToggle.style.background = currentColor;
+    }
+
+    // Toggle button click
+    colorToggle.addEventListener('click', toggleColorPicker);
+
+    // Color button clicks
+    colorBtns.forEach((btn, i) => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentColor = btn.dataset.color;
+        colorFocusIndex = i;
+        selectColor(i);
+        closeColorPicker();
       });
     });
 
-    // Show text input for new or editing text
-    function showTextInput(x, y, existingText = '', color = currentColor) {
+    // Close picker when clicking outside
+    document.addEventListener('click', (e) => {
+      if (colorPickerOpen && !colorPicker.contains(e.target) && e.target !== colorToggle) {
+        closeColorPicker();
+      }
+    });
+
+    // Show text input for new or editing text (imgX, imgY in image space)
+    function showTextInput(imgX, imgY, existingText = '', color = currentColor) {
       const canvasRect = canvas.getBoundingClientRect();
       textInput.style.display = 'block';
-      textInput.style.left = (canvasRect.left + x) + 'px';
-      textInput.style.top = (canvasRect.top + y - 24) + 'px';
+      // Convert image space to screen space for positioning
+      textInput.style.left = (canvasRect.left + imgX * scaleRatio) + 'px';
+      textInput.style.top = (canvasRect.top + imgY * scaleRatio - 24 * scaleRatio) + 'px';
       textInput.style.color = color;
+      textInput.style.fontSize = `${24 * scaleRatio}px`;
       textInput.value = existingText;
       setTimeout(() => { textInput.focus(); textInput.select(); }, 10);
     }
@@ -293,28 +585,31 @@
     // Drawing
     canvas.addEventListener('mousedown', (e) => {
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const canvasX = e.clientX - rect.left;
+      const canvasY = e.clientY - rect.top;
+      // Convert to image space
+      const imgX = canvasX / scaleRatio;
+      const imgY = canvasY / scaleRatio;
 
       if (currentTool === 'text') {
         // Check if clicking on existing text
-        const hitText = getTextAtPoint(x, y);
+        const hitText = getTextAtPoint(canvasX, canvasY);
         if (hitText) {
-          // Select it and start dragging
+          // Select it and start dragging (offsets in image space)
           selectedTextId = hitText.id;
           isDraggingText = true;
-          dragOffsetX = x - hitText.x;
-          dragOffsetY = y - hitText.y;
+          dragOffsetX = imgX - hitText.x;
+          dragOffsetY = imgY - hitText.y;
           redrawAll();
           return;
         }
-        // Create new text at click position
+        // Create new text at click position (image space)
         editingTextId = null;
         selectedTextId = null;
-        showTextInput(x, y);
-        // Store position for new text
-        textInput._newTextX = x;
-        textInput._newTextY = y;
+        showTextInput(imgX, imgY);
+        // Store position for new text in image space
+        textInput._newTextX = imgX;
+        textInput._newTextY = imgY;
         return;
       }
 
@@ -323,10 +618,12 @@
       redrawAll();
 
       isDrawing = true;
-      lastX = startX = x;
-      lastY = startY = y;
+      // Store in image space
+      lastX = startX = imgX;
+      lastY = startY = imgY;
       if (currentTool !== 'pen') {
-        shapeSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        // Snapshot edit layer for shape preview
+        shapeSnapshot = editCtx.getImageData(0, 0, originalWidth, originalHeight);
       }
     });
 
@@ -334,26 +631,30 @@
     canvas.addEventListener('dblclick', (e) => {
       if (currentTool !== 'text') return;
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const hitText = getTextAtPoint(x, y);
+      const canvasX = e.clientX - rect.left;
+      const canvasY = e.clientY - rect.top;
+      const hitText = getTextAtPoint(canvasX, canvasY);
       if (hitText) {
         editingTextId = hitText.id;
+        // hitText.x/y are already in image space
         showTextInput(hitText.x, hitText.y, hitText.text, hitText.color);
       }
     });
 
     canvas.addEventListener('mousemove', (e) => {
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const canvasX = e.clientX - rect.left;
+      const canvasY = e.clientY - rect.top;
+      // Convert to image space
+      const imgX = canvasX / scaleRatio;
+      const imgY = canvasY / scaleRatio;
 
-      // Handle text dragging
+      // Handle text dragging (in image space)
       if (isDraggingText && selectedTextId) {
         const t = textObjects.find(t => t.id === selectedTextId);
         if (t) {
-          t.x = x - dragOffsetX;
-          t.y = y - dragOffsetY;
+          t.x = imgX - dragOffsetX;
+          t.y = imgY - dragOffsetY;
           redrawAll();
         }
         return;
@@ -361,30 +662,52 @@
 
       // Update cursor when hovering over text
       if (currentTool === 'text') {
-        const hitText = getTextAtPoint(x, y);
+        const hitText = getTextAtPoint(canvasX, canvasY);
         canvas.style.cursor = hitText ? 'move' : 'text';
       }
 
       if (!isDrawing) return;
 
+      // Line width scaled to image resolution
+      const lineWidth = 3 / scaleRatio;
+
       if (currentTool === 'pen') {
-        ctx.beginPath();
-        ctx.moveTo(lastX, lastY);
-        ctx.lineTo(x, y);
-        ctx.strokeStyle = currentColor;
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-        lastX = x; lastY = y;
+        // Draw on edit layer in image space
+        editCtx.beginPath();
+        editCtx.moveTo(lastX, lastY);
+        editCtx.lineTo(imgX, imgY);
+        editCtx.strokeStyle = currentColor;
+        editCtx.lineWidth = lineWidth;
+        editCtx.lineCap = 'round';
+        editCtx.stroke();
+        lastX = imgX; lastY = imgY;
+        redrawAll();
       } else if (shapeSnapshot) {
-        ctx.putImageData(shapeSnapshot, 0, 0);
-        ctx.strokeStyle = currentColor;
-        ctx.lineWidth = 3;
+        // Restore snapshot and draw preview shape on edit layer
+        editCtx.putImageData(shapeSnapshot, 0, 0);
+        editCtx.strokeStyle = currentColor;
+        editCtx.lineWidth = lineWidth;
         if (currentTool === 'rect') {
-          ctx.strokeRect(startX, startY, x - startX, y - startY);
+          editCtx.strokeRect(startX, startY, imgX - startX, imgY - startY);
+        } else if (currentTool === 'circle') {
+          if (e.shiftKey) {
+            const radius = Math.hypot(imgX - startX, imgY - startY);
+            editCtx.beginPath();
+            editCtx.arc(startX, startY, radius, 0, Math.PI * 2);
+            editCtx.stroke();
+          } else {
+            const centerX = (startX + imgX) / 2;
+            const centerY = (startY + imgY) / 2;
+            const radiusX = Math.abs(imgX - startX) / 2;
+            const radiusY = Math.abs(imgY - startY) / 2;
+            editCtx.beginPath();
+            editCtx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+            editCtx.stroke();
+          }
         } else if (currentTool === 'arrow') {
-          drawArrow(startX, startY, x, y);
+          drawArrowOnLayer(editCtx, startX, startY, imgX, imgY, lineWidth);
         }
+        redrawAll();
       }
     });
 
@@ -397,21 +720,22 @@
         isDrawing = false;
         shapeSnapshot = null;
         saveState();
-        redrawAll(); // Redraw with text objects on top
+        redrawAll();
       }
     });
     canvas.addEventListener('mouseleave', () => { isDrawing = false; shapeSnapshot = null; isDraggingText = false; });
 
-    function drawArrow(fromX, fromY, toX, toY) {
-      const headLen = 15;
+    // Draw arrow on a specific context (for edit layer in image space)
+    function drawArrowOnLayer(targetCtx, fromX, fromY, toX, toY, lineWidth) {
+      const headLen = 15 / scaleRatio; // Scale arrow head to image space
       const angle = Math.atan2(toY - fromY, toX - fromX);
-      ctx.beginPath();
-      ctx.moveTo(fromX, fromY);
-      ctx.lineTo(toX, toY);
-      ctx.lineTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
-      ctx.moveTo(toX, toY);
-      ctx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
-      ctx.stroke();
+      targetCtx.beginPath();
+      targetCtx.moveTo(fromX, fromY);
+      targetCtx.lineTo(toX, toY);
+      targetCtx.lineTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
+      targetCtx.moveTo(toX, toY);
+      targetCtx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
+      targetCtx.stroke();
     }
 
     // Text input handling - create or update text object
@@ -439,6 +763,7 @@
           });
         }
         redrawAll();
+        saveState();
       }
       editingTextId = null;
       textInput.style.display = 'none';
@@ -489,17 +814,19 @@
       saveCanvas.height = originalHeight;
       const saveCtx = saveCanvas.getContext('2d');
 
-      // Scale factor for full resolution
-      const scale = originalWidth / canvas.width;
+      // Draw base image at original resolution
+      saveCtx.drawImage(baseImage, 0, 0, originalWidth, originalHeight);
+      
+      // Draw edit layer (annotations) at original resolution
+      if (editLayer) {
+        saveCtx.drawImage(editLayer, 0, 0);
+      }
 
-      // Draw the base edited content
-      saveCtx.drawImage(canvas, 0, 0, originalWidth, originalHeight);
-
-      // Draw text objects at full resolution
+      // Draw text objects at full resolution (already in image space)
       textObjects.forEach(t => {
-        saveCtx.font = `bold ${Math.round(24 * scale)}px -apple-system, sans-serif`;
+        saveCtx.font = `bold 24px -apple-system, sans-serif`;
         saveCtx.fillStyle = t.color;
-        saveCtx.fillText(t.text, t.x * scale, t.y * scale);
+        saveCtx.fillText(t.text, t.x, t.y);
       });
 
       return new Promise(resolve => saveCanvas.toBlob(resolve, 'image/png'));
@@ -559,6 +886,79 @@
 
     // Global keyboard shortcuts
     document.addEventListener('keydown', (e) => {
+      // Color picker keyboard navigation
+      if (colorPickerOpen) {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          colorFocusIndex = (colorFocusIndex - 1 + colorBtns.length) % colorBtns.length;
+          updateColorFocus();
+          return;
+        }
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          colorFocusIndex = (colorFocusIndex + 1) % colorBtns.length;
+          updateColorFocus();
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          selectColor(colorFocusIndex);
+          closeColorPicker();
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeColorPicker();
+          return;
+        }
+      }
+
+      // 'k' to open color picker
+      if (e.key === 'k' && !e.metaKey && !e.ctrlKey) {
+        if (textInput.style.display === 'block') return;
+        e.preventDefault();
+        openColorPicker();
+        return;
+      }
+
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        let tool = null;
+        if (e.key === 'w') tool = 'pen';
+        if (e.key === 'a') tool = 'arrow';
+        if (e.key === 'r') tool = 'rect';
+        if (e.key === 'e') tool = 'circle';
+        if (e.key === 't') tool = 'text';
+        if (tool) {
+          if (textInput.style.display === 'block') return;
+          if (colorPickerOpen) return;
+          e.preventDefault();
+          setCurrentTool(tool);
+          return;
+        }
+      }
+
+      // Cmd+Z: undo
+      if (e.metaKey && e.key === 'z') {
+        e.preventDefault();
+        if (history.length > 1) { history.pop(); restoreState(history[history.length - 1]); }
+        redrawAll();
+        return;
+      }
+
+      // Cmd+Backspace: undo all (clear)
+      if (e.metaKey && e.key === 'Backspace') {
+        e.preventDefault();
+        textObjects = [];
+        selectedTextId = null;
+        if (editCtx) {
+          editCtx.clearRect(0, 0, originalWidth, originalHeight);
+        }
+        history = [];
+        saveState();
+        redrawAll();
+        return;
+      }
+
       // Cmd+C: copy edited image to clipboard
       if (e.metaKey && e.key === 'c') {
         // Don't interfere with text input copy
@@ -568,9 +968,21 @@
         return;
       }
 
-      // Enter: save & close editor (unless we're editing a text overlay)
+      // Cmd+Enter: copy to clipboard + save and close (same as rename popup)
+      if (e.metaKey && e.key === 'Enter') {
+        if (textInput.style.display === 'block') return;
+        e.preventDefault();
+        void (async () => {
+          await copyEditedImageToClipboard();
+          await saveEditedScreenshotAndClose();
+        })();
+        return;
+      }
+
+      // Enter: save & close editor (unless we're editing a text overlay or color picker)
       if (e.key === 'Enter') {
         if (textInput.style.display === 'block') return;
+        if (colorPickerOpen) return;
 
         const target = e.target;
         if (
@@ -596,7 +1008,7 @@
           return;
         }
         e.preventDefault();
-        void invoke('close_editor_and_open_rename', { filepath }).catch((err) =>
+        void invoke('close_editor_and_open_rename', { filepath, note: pendingNote }).catch((err) =>
           console.error('Failed to close editor:', err),
         );
         return;
@@ -630,7 +1042,13 @@
     document.getElementById('clearBtn').addEventListener('click', () => {
       textObjects = [];
       selectedTextId = null;
-      drawCanvas(); history = []; saveState();
+      // Clear the edit layer
+      if (editCtx) {
+        editCtx.clearRect(0, 0, originalWidth, originalHeight);
+      }
+      history = [];
+      saveState();
+      redrawAll();
     });
 
     document.getElementById('saveBtn').addEventListener('click', async () => {
@@ -639,7 +1057,7 @@
 
     document.getElementById('cancelBtn').addEventListener('click', async () => {
       // Close editor and return to rename popup (handled by Rust)
-      await invoke('close_editor_and_open_rename', { filepath });
+      await invoke('close_editor_and_open_rename', { filepath, note: pendingNote });
     });
 
     loadImage();

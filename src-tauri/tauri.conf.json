@@ -14,10 +14,13 @@
     "windows": [
       {
         "title": "screenshotapp",
-        "width": 800,
-        "height": 600,
+        "width": 260,
+        "height": 400,
         "visible": false,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "resizable": false,
+        "transparent": true,
+        "decorations": false
       }
     ],
     "security": {

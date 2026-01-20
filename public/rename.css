@@ -1,0 +1,279 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { 
+  height: 100%; 
+  background: transparent;
+  border-radius: 12px;
+  overflow: hidden;
+}
+body {
+  font-family: 'New York', ui-serif, Georgia, serif;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+}
+
+.group { position: relative; }
+
+.outer-frame {
+  padding: 14px 14px 32px 14px;
+  border-radius: 12px;
+  display: inline-block;
+}
+
+.tooltip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+  top: 100%;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  opacity: 0;
+  transition: all 0.2s;
+  pointer-events: none;
+}
+
+.group:hover .tooltip {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+/* ========================================
+   LIGHT MODE: "Ink & Paper" (Variant C)
+   ======================================== */
+
+body.theme-light {
+  --c-white: #ffffff;
+  --c-paper: #fafafa;
+  --c-ink: #0a0a0a;
+  --c-ink-light: #6b6b6b;
+  --c-accent: #000000;
+  --c-accent-soft: rgba(0, 0, 0, 0.08);
+  --c-border: #e0e0e0;
+  --c-border-dark: #c0c0c0;
+  --c-shadow: rgba(0, 0, 0, 0.06);
+}
+
+body.theme-light .outer-frame {
+  background-color: #2a2a2a;
+  background-image: 
+    radial-gradient(ellipse at 15% 20%, rgba(140, 140, 140, 0.6) 0%, transparent 40%),
+    radial-gradient(ellipse at 85% 80%, rgba(100, 100, 100, 0.5) 0%, transparent 35%),
+    radial-gradient(ellipse at 60% 10%, rgba(80, 80, 80, 0.4) 0%, transparent 30%),
+    linear-gradient(160deg, #6a6a6a 0%, #4a4a4a 40%, #2a2a2a 100%);
+  border: 1px solid #4a4a4a;
+}
+
+body.theme-light .rename-frame {
+  width: 380px;
+  background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+  border: none;
+  box-shadow: 
+    0 4px 12px -2px rgba(0, 0, 0, 0.08),
+    0 12px 32px -4px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  border-radius: 12px;
+}
+
+body.theme-light .group {
+  background: var(--c-white);
+  border-radius: 6px;
+}
+
+body.theme-light .name-input {
+  width: 100%;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--c-white);
+  border: 1px solid var(--c-border);
+  color: var(--c-ink);
+  font-family: 'New York', ui-serif, Georgia, serif;
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  box-shadow: inset 0 1px 2px var(--c-shadow);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+body.theme-light .name-input:focus {
+  border-color: var(--c-accent);
+  box-shadow: 
+    inset 0 1px 2px var(--c-shadow),
+    0 0 0 3px var(--c-accent-soft);
+  position: relative;
+  z-index: 1;
+}
+
+body.theme-light .note-input {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--c-paper);
+  border: 1px solid var(--c-border);
+  color: var(--c-ink);
+  font-family: 'New York', ui-serif, Georgia, serif;
+  font-size: 14px;
+  font-weight: 400;
+  font-style: italic;
+  box-shadow: inset 0 1px 2px var(--c-shadow);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+body.theme-light .note-input::placeholder {
+  color: var(--c-ink-light);
+  font-style: italic;
+}
+
+body.theme-light .note-input:focus {
+  border-color: var(--c-accent);
+  box-shadow: 
+    inset 0 1px 2px var(--c-shadow),
+    0 0 0 3px var(--c-accent-soft);
+}
+
+body.theme-light .tooltip {
+  background: var(--c-paper);
+  border: 1px solid var(--c-border);
+  color: var(--c-ink-light);
+  font-family: 'New York', ui-serif, Georgia, serif;
+  font-size: 11px;
+  font-style: italic;
+  letter-spacing: 0.01em;
+  margin-top: 8px;
+  padding: 6px 14px;
+  gap: 12px;
+  border-radius: 20px;
+  box-shadow: 0 2px 6px var(--c-shadow);
+}
+
+body.theme-light .tooltip span:not(.sep) {
+  color: var(--c-ink);
+  font-style: normal;
+}
+
+body.theme-light .tooltip .sep {
+  color: var(--c-border-dark);
+}
+
+/* ========================================
+   DARK MODE: "Midnight Editorial" (Variant D)
+   Dark frame with LIGHT inputs + dark text
+   ======================================== */
+
+body.theme-dark {
+  --d-black: #0a0a0a;
+  --d-surface: #141414;
+  --d-text: #f5f5f5;
+  --d-text-dim: #8a8a8a;
+  --d-accent: #ffffff;
+  --d-accent-soft: rgba(255, 255, 255, 0.12);
+  --d-border: #2a2a2a;
+  --d-border-light: #3a3a3a;
+  --d-shadow: rgba(0, 0, 0, 0.4);
+}
+
+body.theme-dark .outer-frame {
+  background-color: #1a1a1a;
+  background-image: 
+    radial-gradient(ellipse at 15% 20%, rgba(90, 90, 90, 0.5) 0%, transparent 40%),
+    radial-gradient(ellipse at 80% 75%, rgba(70, 70, 70, 0.4) 0%, transparent 35%),
+    radial-gradient(ellipse at 50% 0%, rgba(60, 60, 60, 0.3) 0%, transparent 30%),
+    linear-gradient(160deg, #3a3a3a 0%, #252525 40%, #1a1a1a 100%);
+  border: 1px solid #3a3a3a;
+}
+
+body.theme-dark .rename-frame {
+  width: 380px;
+  background: linear-gradient(135deg, #2d2d2d 0%, #1e1e1e 100%);
+  border: none;
+  box-shadow: 
+    0 4px 12px -2px rgba(0, 0, 0, 0.3),
+    0 12px 32px -4px rgba(0, 0, 0, 0.4);
+  padding: 8px;
+  border-radius: 12px;
+}
+
+body.theme-dark .group {
+  background: transparent;
+}
+
+body.theme-dark .name-input {
+  width: 100%;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: #353535;
+  border: 1px solid #454545;
+  color: var(--d-text);
+  font-family: 'New York', ui-serif, Georgia, serif;
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  box-shadow: inset 0 1px 2px var(--d-shadow);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+body.theme-dark .name-input:focus {
+  border-color: var(--d-accent);
+  box-shadow: 
+    inset 0 1px 2px var(--d-shadow),
+    0 0 0 3px var(--d-accent-soft);
+  position: relative;
+  z-index: 1;
+}
+
+body.theme-dark .note-input {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: #303030;
+  border: 1px solid #424242;
+  color: var(--d-text);
+  font-family: 'New York', ui-serif, Georgia, serif;
+  font-size: 14px;
+  font-weight: 400;
+  font-style: italic;
+  box-shadow: inset 0 1px 2px var(--d-shadow);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+body.theme-dark .note-input::placeholder {
+  color: var(--d-text-dim);
+  font-style: italic;
+}
+
+body.theme-dark .note-input:focus {
+  border-color: var(--d-accent);
+  box-shadow: 
+    inset 0 1px 2px var(--d-shadow),
+    0 0 0 3px var(--d-accent-soft);
+}
+
+body.theme-dark .tooltip {
+  background: var(--d-surface);
+  border: 1px solid var(--d-border);
+  color: var(--d-text-dim);
+  font-family: 'New York', ui-serif, Georgia, serif;
+  font-size: 11px;
+  font-style: italic;
+  letter-spacing: 0.01em;
+  margin-top: 8px;
+  padding: 6px 14px;
+  gap: 12px;
+  border-radius: 20px;
+  box-shadow: 0 2px 6px var(--d-shadow);
+}
+
+body.theme-dark .tooltip span:not(.sep) {
+  color: var(--d-text);
+  font-style: normal;
+}
+
+body.theme-dark .tooltip .sep {
+  color: var(--d-border-light);
+}

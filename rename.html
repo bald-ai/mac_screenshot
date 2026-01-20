@@ -4,68 +4,54 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Screenshot</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: transparent;
-      padding: 4px;
+  <link rel="stylesheet" href="/rename.css" />
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+    
+    function applyTheme(theme) {
+      let isDark;
+      if (theme === 'system') {
+        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      } else {
+        isDark = theme === 'dark';
+      }
+      document.body.classList.remove('theme-light', 'theme-dark');
+      document.body.classList.add(isDark ? 'theme-dark' : 'theme-light');
     }
-
-    .group { position: relative; }
-
-    input {
-      width: 100%;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid #e5e5e5;
-      background: #fff;
-      color: #0f0f0f;
-      font-size: 14px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-      outline: none;
-      transition: all 0.2s;
-    }
-    input:focus {
-      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-      border-color: #3b82f6;
-    }
-
-    .tooltip {
-      position: absolute;
-      left: 50%;
-      transform: translateX(-50%) scale(0.95);
-      top: 100%;
-      margin-top: 6px;
-      padding: 6px 12px;
-      background: #0f0f0f;
-      color: #fafafa;
-      font-size: 11px;
-      border-radius: 9999px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      white-space: nowrap;
-      opacity: 0;
-      transition: all 0.2s;
-    }
-    .tooltip .sep { opacity: 0.4; }
-
-    .group:focus-within .tooltip {
-      opacity: 1;
-      transform: translateX(-50%) scale(1);
-    }
-  </style>
+    
+    // Load theme from settings
+    invoke('get_settings').then(settings => {
+      applyTheme(settings.theme || 'system');
+      
+      // Listen for system theme changes only if using system preference
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (settings.theme === 'system') {
+          applyTheme('system');
+        }
+      });
+    }).catch(() => {
+      // Fallback to system preference
+      applyTheme('system');
+    });
+  </script>
 </head>
-<body>
-  <div class="group">
-    <input type="text" id="nameInput" placeholder="name" autofocus />
-    <div class="tooltip">
-      <span>↵ save</span>
-      <span class="sep">·</span>
-      <span>esc delete</span>
-      <span class="sep">·</span>
-      <span>tab save+edit</span>
+<body class="theme-dark">
+  <div class="outer-frame">
+    <div class="rename-frame">
+    <div class="group">
+      <input type="text" id="nameInput" class="name-input" placeholder="name" autofocus />
+      <input type="text" id="noteInput" class="note-input" placeholder="Annotate image with text." />
+      <div class="tooltip">
+        <span>↵ save</span>
+        <span class="sep">·</span>
+        <span>⌘↵ copy+save</span>
+        <span class="sep">·</span>
+        <span>esc delete</span>
+        <span class="sep">·</span>
+        <span>tab save+edit</span>
+      </div>
+    </div>
+    <canvas id="noteCanvas" style="display:none;"></canvas>
     </div>
   </div>
 
@@ -74,12 +60,21 @@
 
     const params = new URLSearchParams(window.location.search);
     let filepath = params.get('path') || '';
+    const initialNote = params.get('note') || '';
     const initialFilename = filepath.split('/').pop()?.replace(/\.[^.]+$/, '') || 'screenshot';
 
     const input = document.getElementById('nameInput');
+    const noteInput = document.getElementById('noteInput');
+    const canvas = document.getElementById('noteCanvas');
+    const ctx = canvas.getContext('2d');
 
-    // Pre-populate rename input
+    // Load settings for quality and prefix
+    let settings = { quality: 70, maxWidth: 1280, notePrefixEnabled: false, notePrefix: '' };
+    invoke('get_settings').then(s => { settings = s; }).catch(console.error);
+
+    // Pre-populate rename input and note
     input.value = initialFilename;
+    noteInput.value = initialNote;
     input.select();
 
     // Block macOS forbidden filename characters (/ and :)
@@ -92,6 +87,121 @@
         input.selectionStart = input.selectionEnd = Math.max(0, cursorPos - 1);
       }
     });
+
+    // Load image and burn note into it (with adaptive scaling for different screenshot sizes)
+    async function burnNoteIntoImage(note) {
+      // Prepend prefix if enabled
+      const finalNote = (settings.notePrefixEnabled && settings.notePrefix) 
+        ? settings.notePrefix + note 
+        : note;
+      // Read the original image
+      const base64 = await invoke('read_image_base64', { filepath });
+      const wrapText = (text, maxWidth, context) => {
+        if (!text) return [''];
+
+        const words = text.split(/\s+/).filter(Boolean);
+        if (words.length === 0) return [''];
+
+        const lines = [];
+        let currentLine = '';
+
+        const splitLongWord = (word) => {
+          let segment = '';
+          for (const char of word) {
+            const testSegment = segment + char;
+            if (context.measureText(testSegment).width <= maxWidth) {
+              segment = testSegment;
+            } else {
+              if (segment) lines.push(segment);
+              segment = char;
+            }
+          }
+          return segment;
+        };
+
+        words.forEach((word) => {
+          const nextLine = currentLine ? `${currentLine} ${word}` : word;
+          if (context.measureText(nextLine).width <= maxWidth) {
+            currentLine = nextLine;
+            return;
+          }
+
+          if (currentLine) {
+            lines.push(currentLine);
+            currentLine = '';
+          }
+
+          if (context.measureText(word).width <= maxWidth) {
+            currentLine = word;
+          } else {
+            currentLine = splitLongWord(word);
+          }
+        });
+
+        if (currentLine) lines.push(currentLine);
+
+        return lines.length ? lines : [''];
+      };
+
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const MIN_NOTE_WIDTH = 400;
+          const MAX_CHAR_LIMIT = 1000;
+          const FONT_SIZE = Math.max(12, Math.min(20, img.width * 0.02));
+          const PADDING = Math.max(8, Math.min(16, img.width * 0.015));
+          const LINE_HEIGHT = 1.4;
+
+          let displayNote = finalNote;
+          if (displayNote.length > MAX_CHAR_LIMIT) {
+            displayNote = displayNote.slice(0, MAX_CHAR_LIMIT);
+          }
+
+          const effectiveWidth = Math.max(img.width, MIN_NOTE_WIDTH);
+          const availableTextWidth = effectiveWidth - PADDING * 2;
+
+          ctx.font = `${FONT_SIZE}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+          const lines = wrapText(displayNote, availableTextWidth, ctx);
+          const lineHeight = FONT_SIZE * LINE_HEIGHT;
+          const noteBarHeight = Math.ceil(lines.length * lineHeight + PADDING * 2);
+
+          // Extend canvas to fit image + note bar
+          canvas.width = effectiveWidth;
+          canvas.height = img.height + noteBarHeight;
+
+          const xOffset = (canvas.width - img.width) / 2;
+          if (xOffset > 0) {
+            ctx.fillStyle = '#f2f2f2';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+          }
+
+          // Draw original image centered
+          ctx.drawImage(img, xOffset, 0, img.width, img.height);
+
+          // Draw white bar at bottom
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, img.height, canvas.width, noteBarHeight);
+
+          // Draw black text
+          ctx.fillStyle = '#000000';
+          ctx.font = `${FONT_SIZE}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+          ctx.textBaseline = 'top';
+
+          lines.forEach((line, index) => {
+            const y = img.height + PADDING + index * lineHeight;
+            ctx.fillText(line, PADDING, y);
+          });
+          
+          // Always export as JPEG using configured quality from settings
+          const quality = settings.quality / 100;
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+          resolve(base64Data);
+        };
+        img.onerror = reject;
+        img.src = base64;
+      });
+    }
 
     async function saveRenameIfNeeded() {
       const newName = input.value.trim() || initialFilename;
@@ -108,8 +218,30 @@
     }
 
     // === ACTIONS ===
-    async function doSave() {
-      await saveRenameIfNeeded();
+    async function doSave(copyToClipboard = false) {
+      // First rename if needed
+      filepath = await saveRenameIfNeeded();
+      
+      // If there's a note, burn it into the image
+      const note = noteInput.value.trim();
+      if (note) {
+        try {
+          const annotatedBase64 = await burnNoteIntoImage(note);
+          await invoke('save_edited_screenshot', { filepath, base64Data: annotatedBase64 });
+        } catch (e) {
+          console.error('Failed to add note:', e);
+        }
+      }
+      
+      // Copy to clipboard if requested
+      if (copyToClipboard) {
+        try {
+          await invoke('copy_file_to_clipboard', { filepath });
+        } catch (e) {
+          console.error('Failed to copy to clipboard:', e);
+        }
+      }
+      
       await invoke('close_rename_popup');
     }
 
@@ -118,16 +250,35 @@
     }
 
     async function openEditor() {
-      // Save typed name first, then open editor on the renamed file
-      const renamedPath = await saveRenameIfNeeded();
-      await invoke('open_editor_window', { filepath: renamedPath });
+      // Save typed name first
+      filepath = await saveRenameIfNeeded();
+      
+      // Pass the note to the editor so it can be passed back when returning
+      const note = noteInput.value.trim();
+      await invoke('open_editor_window', { filepath, note });
     }
 
     // Global keyboard shortcuts - work when window is focused
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+      if (e.key === 'Enter' && e.metaKey) { 
+        // Cmd+Enter: copy + save + close
+        e.preventDefault(); 
+        doSave(true); 
+      }
+      else if (e.key === 'Enter') { e.preventDefault(); doSave(); }
       else if (e.key === 'Escape') { e.preventDefault(); doDelete(); }
-      else if (e.key === 'Tab') { e.preventDefault(); openEditor(); }
+      else if (e.key === 'Tab' && !e.shiftKey) { 
+        // Only handle Tab for editor if not in note field
+        if (document.activeElement === input) {
+          // Move focus to note input
+          e.preventDefault();
+          noteInput.focus();
+        } else if (document.activeElement === noteInput) {
+          // From note field, Tab opens editor
+          e.preventDefault();
+          openEditor();
+        }
+      }
     });
   </script>
 </body>
