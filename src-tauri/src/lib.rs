@@ -696,6 +696,7 @@ fn close_editor_and_open_rename(app: tauri::AppHandle, filepath: String, note: O
         .resizable(false)
         .always_on_top(true)
         .center()
+        .focused(true)
         .decorations(false)
         .transparent(true)
         .build()
