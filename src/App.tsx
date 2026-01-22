@@ -23,7 +23,6 @@ interface Settings {
   notePrefixEnabled: boolean;
   notePrefix: string;
   filenameTemplate: FilenameTemplate;
-  theme: "grey" | "dark" | "system";
   fullscreenShortcut: string;
   areaShortcut: string;
 }
@@ -50,12 +49,11 @@ const SIZE_OPTIONS = [
 
 function App() {
   const [settings, setSettings] = useState<Settings>({
-    quality: 20,
+    quality: 50,
     maxWidth: 1280,
     notePrefixEnabled: false,
     notePrefix: "",
     filenameTemplate: DEFAULT_FILENAME_TEMPLATE,
-    theme: "system",
     fullscreenShortcut: "Cmd+Shift+3",
     areaShortcut: "Cmd+Shift+4",
   });
@@ -65,46 +63,12 @@ function App() {
   const [shortcutError, setShortcutError] = useState<string | null>(null);
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
 
-  // Apply theme to body element
-  const applyTheme = (theme: "grey" | "dark" | "system") => {
-    let isDark: boolean;
-    if (theme === "system") {
-      isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    } else {
-      isDark = theme === "dark";
-    }
-    document.body.classList.remove("theme-grey", "theme-dark");
-    document.body.classList.add(isDark ? "theme-dark" : "theme-grey");
-  };
-
   // Load settings on mount
   useEffect(() => {
     invoke<Settings>("get_settings").then((s) => {
-      const themeFromBackend = s.theme as string;
-      const normalizedTheme = themeFromBackend === "light" ? "grey" : s.theme;
-      const normalizedSettings = { ...s, theme: normalizedTheme as "grey" | "dark" | "system" };
-      setSettings(normalizedSettings);
-      applyTheme(normalizedSettings.theme);
-      if (themeFromBackend === "light") {
-        invoke("save_settings", { settings: normalizedSettings }).catch(console.error);
-      }
+      setSettings(s);
     }).catch(console.error);
   }, []);
-
-  // Apply theme when settings.theme changes
-  useEffect(() => {
-    applyTheme(settings.theme);
-    
-    // Listen for system theme changes when using system preference
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = () => {
-      if (settings.theme === "system") {
-        applyTheme("system");
-      }
-    };
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
-  }, [settings.theme]);
 
   // Save settings when they change
   const updateSettings = (newSettings: Settings) => {
@@ -317,29 +281,6 @@ function App() {
           <button onClick={() => setShowFilenameTemplate(true)} className="template-btn">
             Change Filename Template
           </button>
-        </div>
-        <div className="settings-row">
-          <label>Theme:</label>
-          <div className="theme-toggle">
-            <button
-              className={settings.theme === "grey" ? "active" : ""}
-              onClick={() => updateSettings({ ...settings, theme: "grey" })}
-            >
-              Grey
-            </button>
-            <button
-              className={settings.theme === "dark" ? "active" : ""}
-              onClick={() => updateSettings({ ...settings, theme: "dark" })}
-            >
-              Dark
-            </button>
-            <button
-              className={settings.theme === "system" ? "active" : ""}
-              onClick={() => updateSettings({ ...settings, theme: "system" })}
-            >
-              System
-            </button>
-          </div>
         </div>
         <div className="shortcuts-hint">
           <span

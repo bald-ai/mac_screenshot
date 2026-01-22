@@ -15,7 +15,7 @@
       {
         "title": "screenshotapp",
         "width": 260,
-        "height": 400,
+        "height": 360,
         "visible": false,
         "skipTaskbar": true,
         "resizable": false,

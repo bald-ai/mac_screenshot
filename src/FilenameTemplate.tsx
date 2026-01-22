@@ -55,7 +55,7 @@ function FilenameTemplate({ template, onTemplateChange, onReset }: Props) {
         parts.push(PLACEHOLDER_VALUES[block.id]);
       }
     }
-    return parts.length > 0 ? parts.join("_") + ".webp" : ".webp";
+    return parts.length > 0 ? parts.join("_") + ".jpg" : "screenshot.jpg";
   };
 
   const isTimeEnabled = blocks.find((b) => b.id === "time")?.enabled ?? false;

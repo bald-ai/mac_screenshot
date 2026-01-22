@@ -5,33 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Configure Shortcut</title>
   <link rel="stylesheet" href="/shortcut-config.css" />
-  <script type="module">
-    import { invoke } from '@tauri-apps/api/core';
-
-    function applyTheme(theme) {
-      let isDark;
-      if (theme === 'system') {
-        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      } else {
-        isDark = theme === 'dark';
-      }
-      document.body.classList.remove('theme-grey', 'theme-dark');
-      document.body.classList.add(isDark ? 'theme-dark' : 'theme-grey');
-    }
-
-    invoke('get_settings').then(settings => {
-      applyTheme(settings.theme || 'system');
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-        if (settings.theme === 'system') {
-          applyTheme('system');
-        }
-      });
-    }).catch(() => {
-      applyTheme('system');
-    });
-  </script>
 </head>
-<body class="theme-dark">
+<body>
   <div class="outer-frame" data-tauri-drag-region>
     <div class="shortcut-config-frame" data-tauri-drag-region>
       <div class="title">Press new shortcut</div>

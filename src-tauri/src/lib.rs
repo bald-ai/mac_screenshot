@@ -52,16 +52,10 @@ pub struct Settings {
     pub note_prefix: String,
     #[serde(default)]
     pub filename_template: FilenameTemplate,
-    #[serde(default = "default_theme")]
-    pub theme: String,
     #[serde(default = "default_fullscreen_shortcut")]
     pub fullscreen_shortcut: String,
     #[serde(default = "default_area_shortcut")]
     pub area_shortcut: String,
-}
-
-fn default_theme() -> String {
-    "system".to_string()
 }
 
 fn default_fullscreen_shortcut() -> String {
@@ -75,12 +69,11 @@ fn default_area_shortcut() -> String {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            quality: 70,
+            quality: 50,
             max_width: 1280,
             note_prefix_enabled: false,
             note_prefix: String::new(),
             filename_template: FilenameTemplate::default(),
-            theme: "system".to_string(),
             fullscreen_shortcut: default_fullscreen_shortcut(),
             area_shortcut: default_area_shortcut(),
         }
@@ -102,10 +95,7 @@ fn load_settings_from_file() -> Settings {
     let path = get_settings_path();
     if path.exists() {
         if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(mut settings) = serde_json::from_str::<Settings>(&content) {
-                if settings.theme == "light" {
-                    settings.theme = "grey".to_string();
-                }
+            if let Ok(settings) = serde_json::from_str::<Settings>(&content) {
                 return settings;
             }
         }
@@ -261,7 +251,10 @@ fn generate_screenshot_path(extension: &str, settings: &Settings, width: u32, he
         }
     }
     
-    let base_name = parts.join("_");
+    let mut base_name = parts.join("_");
+    if base_name.is_empty() {
+        base_name = "screenshot".to_string();
+    }
     let counter_enabled = template.blocks.iter().any(|b| b.id == "counter" && b.enabled);
     
     if counter_enabled || template.use_counter {
@@ -346,7 +339,7 @@ fn calculate_editor_window_size(img_width: u32, img_height: u32, padding: f64) -
 }
 
 // Image optimization: configurable quality and max width via Settings
-// Default: 70% quality, 1280px max width
+// Default: 50% quality, 1280px max width
 // Resizes images wider than max_width to maintain performance
 fn optimize_screenshot(filepath: &str, settings: &Settings) -> Result<String, String> {
     // Convert to JPEG with configured quality and resize to max width
@@ -1215,9 +1208,6 @@ pub fn run() {
             active_fullscreen_shortcut: Mutex::new(shortcut_full),
             active_area_shortcut: Mutex::new(shortcut_area),
         })
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_shortcuts([shortcut_area, shortcut_full])

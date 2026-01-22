@@ -5,37 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Screenshot</title>
   <link rel="stylesheet" href="/rename.css" />
-  <script type="module">
-    import { invoke } from '@tauri-apps/api/core';
-    
-    function applyTheme(theme) {
-      let isDark;
-      if (theme === 'system') {
-        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      } else {
-        isDark = theme === 'dark';
-      }
-      document.body.classList.remove('theme-grey', 'theme-dark');
-      document.body.classList.add(isDark ? 'theme-dark' : 'theme-grey');
-    }
-    
-    // Load theme from settings
-    invoke('get_settings').then(settings => {
-      applyTheme(settings.theme || 'system');
-      
-      // Listen for system theme changes only if using system preference
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-        if (settings.theme === 'system') {
-          applyTheme('system');
-        }
-      });
-    }).catch(() => {
-      // Fallback to system preference
-      applyTheme('system');
-    });
-  </script>
 </head>
-<body class="theme-dark">
+<body>
   <div class="outer-frame" data-tauri-drag-region>
     <div class="rename-frame" data-tauri-drag-region>
     <div class="group">
@@ -69,7 +40,7 @@
     const ctx = canvas.getContext('2d');
 
     // Load settings for quality and prefix
-    let settings = { quality: 70, maxWidth: 1280, notePrefixEnabled: false, notePrefix: '' };
+    let settings = { quality: 50, maxWidth: 1280, notePrefixEnabled: false, notePrefix: '' };
     invoke('get_settings').then(s => { settings = s; }).catch(console.error);
 
     // Pre-populate rename input and note

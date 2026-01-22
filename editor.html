@@ -6,7 +6,7 @@
   <title>Edit Screenshot</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; overflow: hidden; }
+    html, body { height: 100%; overflow: hidden; border-radius: 12px; }
     body {
       --editor-bg: linear-gradient(135deg, #2b4f74 0%, #1f6b6f 48%, #6b6862 100%);
       --editor-bg-glow: radial-gradient(110% 140% at 12% 18%, rgba(84, 120, 175, 0.55) 0%, rgba(29, 75, 96, 0.25) 45%, rgba(0, 0, 0, 0) 70%);
@@ -123,23 +123,6 @@
     }
     #editCanvas { cursor: crosshair; }
 
-    @media (prefers-color-scheme: light) {
-      body {
-        --editor-bg-glow: radial-gradient(110% 140% at 12% 18%, rgba(123, 150, 196, 0.45) 0%, rgba(90, 144, 150, 0.25) 45%, rgba(0, 0, 0, 0) 70%);
-        --editor-bg-mist: radial-gradient(120% 120% at 88% 30%, rgba(96, 146, 164, 0.25) 0%, rgba(0, 0, 0, 0) 55%);
-        color: #0f0f0f;
-      }
-      .toolbar-wrapper { background: var(--editor-bg-glow), var(--editor-bg-mist), var(--editor-bg); }
-      .toolbar {
-        background: var(--editor-bg-glow), var(--editor-bg-mist), var(--editor-bg);
-        border-color: rgba(0, 0, 0, 0.1);
-        box-shadow: 0 6px 14px rgba(0, 0, 0, 0.12);
-      }
-      .tool { color: #111; }
-      .tool:hover { background: #c0c0c0; color: #000; }
-      .color-picker { background: #d0d0d0; }
-    }
-
     /* Toast notification */
     #toast {
       position: fixed;
@@ -248,7 +231,7 @@
     const pendingNote = params.get('note') || '';
 
     // Load settings for prefix
-    let settings = { quality: 70, maxWidth: 1280, notePrefixEnabled: false, notePrefix: '' };
+    let settings = { quality: 50, maxWidth: 1280, notePrefixEnabled: false, notePrefix: '' };
     invoke('get_settings').then(s => { settings = s; }).catch(console.error);
 
     const canvas = document.getElementById('editCanvas');

@@ -29,6 +29,7 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(__dirname, "index.html"),
         rename: resolve(__dirname, "rename.html"),
+        editor: resolve(__dirname, "editor.html"),
         shortcutConfig: resolve(__dirname, "shortcut-config.html"),
       },
     },
