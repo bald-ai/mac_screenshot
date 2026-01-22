@@ -18,6 +18,7 @@ body {
   padding: 14px 14px 32px 14px;
   border-radius: 12px;
   display: inline-block;
+  background: #1a1a1a; /* fallback for hit-testing */
 }
 
 .tooltip {
@@ -42,7 +43,7 @@ body {
    LIGHT MODE: "Ink & Paper" (Variant C)
    ======================================== */
 
-body.theme-light {
+body.theme-grey {
   --c-white: #ffffff;
   --c-paper: #fafafa;
   --c-ink: #0a0a0a;
@@ -54,17 +55,21 @@ body.theme-light {
   --c-shadow: rgba(0, 0, 0, 0.06);
 }
 
-body.theme-light .outer-frame {
-  background-color: #2a2a2a;
+body.theme-grey .outer-frame {
+  background-color: #5a5a5a;
   background-image: 
-    radial-gradient(ellipse at 15% 20%, rgba(140, 140, 140, 0.6) 0%, transparent 40%),
-    radial-gradient(ellipse at 85% 80%, rgba(100, 100, 100, 0.5) 0%, transparent 35%),
-    radial-gradient(ellipse at 60% 10%, rgba(80, 80, 80, 0.4) 0%, transparent 30%),
-    linear-gradient(160deg, #6a6a6a 0%, #4a4a4a 40%, #2a2a2a 100%);
-  border: 1px solid #4a4a4a;
+    radial-gradient(ellipse at 10% 15%, rgba(220, 220, 230, 0.8) 0%, transparent 45%),
+    radial-gradient(ellipse at 90% 85%, rgba(190, 185, 200, 0.7) 0%, transparent 40%),
+    radial-gradient(ellipse at 50% 0%, rgba(240, 235, 250, 0.6) 0%, transparent 35%),
+    radial-gradient(ellipse at 70% 50%, rgba(200, 195, 210, 0.4) 0%, transparent 50%),
+    linear-gradient(145deg, #a8a3b0 0%, #8a8590 30%, #6a6570 70%, #5a5560 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 8px 32px rgba(0, 0, 0, 0.25);
 }
 
-body.theme-light .rename-frame {
+body.theme-grey .rename-frame {
   width: 380px;
   background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
   border: none;
@@ -75,12 +80,12 @@ body.theme-light .rename-frame {
   border-radius: 12px;
 }
 
-body.theme-light .group {
+body.theme-grey .group {
   background: var(--c-white);
   border-radius: 6px;
 }
 
-body.theme-light .name-input {
+body.theme-grey .name-input {
   width: 100%;
   padding: 8px 14px;
   border-radius: 6px;
@@ -96,7 +101,7 @@ body.theme-light .name-input {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-body.theme-light .name-input:focus {
+body.theme-grey .name-input:focus {
   border-color: var(--c-accent);
   box-shadow: 
     inset 0 1px 2px var(--c-shadow),
@@ -105,7 +110,7 @@ body.theme-light .name-input:focus {
   z-index: 1;
 }
 
-body.theme-light .note-input {
+body.theme-grey .note-input {
   width: 100%;
   margin-top: 4px;
   padding: 8px 14px;
@@ -122,19 +127,19 @@ body.theme-light .note-input {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-body.theme-light .note-input::placeholder {
+body.theme-grey .note-input::placeholder {
   color: var(--c-ink-light);
   font-style: italic;
 }
 
-body.theme-light .note-input:focus {
+body.theme-grey .note-input:focus {
   border-color: var(--c-accent);
   box-shadow: 
     inset 0 1px 2px var(--c-shadow),
     0 0 0 3px var(--c-accent-soft);
 }
 
-body.theme-light .tooltip {
+body.theme-grey .tooltip {
   background: var(--c-paper);
   border: 1px solid var(--c-border);
   color: var(--c-ink-light);
@@ -149,12 +154,12 @@ body.theme-light .tooltip {
   box-shadow: 0 2px 6px var(--c-shadow);
 }
 
-body.theme-light .tooltip span:not(.sep) {
+body.theme-grey .tooltip span:not(.sep) {
   color: var(--c-ink);
   font-style: normal;
 }
 
-body.theme-light .tooltip .sep {
+body.theme-grey .tooltip .sep {
   color: var(--c-border-dark);
 }
 
@@ -178,11 +183,15 @@ body.theme-dark {
 body.theme-dark .outer-frame {
   background-color: #1a1a1a;
   background-image: 
-    radial-gradient(ellipse at 15% 20%, rgba(90, 90, 90, 0.5) 0%, transparent 40%),
-    radial-gradient(ellipse at 80% 75%, rgba(70, 70, 70, 0.4) 0%, transparent 35%),
-    radial-gradient(ellipse at 50% 0%, rgba(60, 60, 60, 0.3) 0%, transparent 30%),
-    linear-gradient(160deg, #3a3a3a 0%, #252525 40%, #1a1a1a 100%);
-  border: 1px solid #3a3a3a;
+    radial-gradient(ellipse at 10% 15%, rgba(100, 100, 105, 0.6) 0%, transparent 45%),
+    radial-gradient(ellipse at 90% 85%, rgba(80, 80, 85, 0.5) 0%, transparent 40%),
+    radial-gradient(ellipse at 50% 0%, rgba(110, 110, 115, 0.4) 0%, transparent 35%),
+    radial-gradient(ellipse at 70% 50%, rgba(70, 70, 75, 0.3) 0%, transparent 50%),
+    linear-gradient(145deg, #484848 0%, #353535 30%, #252525 70%, #1a1a1a 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
 body.theme-dark .rename-frame {

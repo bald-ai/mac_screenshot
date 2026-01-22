@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import FilenameTemplateEditor from "./FilenameTemplate";
+import { formatShortcutForDisplay } from "./shortcutFormat";
 
 interface FilenameBlock {
   id: string;
@@ -22,7 +23,9 @@ interface Settings {
   notePrefixEnabled: boolean;
   notePrefix: string;
   filenameTemplate: FilenameTemplate;
-  theme: "light" | "dark" | "system";
+  theme: "grey" | "dark" | "system";
+  fullscreenShortcut: string;
+  areaShortcut: string;
 }
 
 const DEFAULT_FILENAME_TEMPLATE: FilenameTemplate = {
@@ -46,28 +49,45 @@ const SIZE_OPTIONS = [
 ];
 
 function App() {
-  const [settings, setSettings] = useState<Settings>({ quality: 20, maxWidth: 1280, notePrefixEnabled: false, notePrefix: "", filenameTemplate: DEFAULT_FILENAME_TEMPLATE, theme: "system" });
+  const [settings, setSettings] = useState<Settings>({
+    quality: 20,
+    maxWidth: 1280,
+    notePrefixEnabled: false,
+    notePrefix: "",
+    filenameTemplate: DEFAULT_FILENAME_TEMPLATE,
+    theme: "system",
+    fullscreenShortcut: "Cmd+Shift+3",
+    areaShortcut: "Cmd+Shift+4",
+  });
   const [saveStatus, setSaveStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
   const saveStatusTimeoutRef = useRef<number | null>(null);
   const [showFilenameTemplate, setShowFilenameTemplate] = useState(false);
+  const [shortcutError, setShortcutError] = useState<string | null>(null);
+  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
 
   // Apply theme to body element
-  const applyTheme = (theme: "light" | "dark" | "system") => {
+  const applyTheme = (theme: "grey" | "dark" | "system") => {
     let isDark: boolean;
     if (theme === "system") {
       isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     } else {
       isDark = theme === "dark";
     }
-    document.body.classList.remove("theme-light", "theme-dark");
-    document.body.classList.add(isDark ? "theme-dark" : "theme-light");
+    document.body.classList.remove("theme-grey", "theme-dark");
+    document.body.classList.add(isDark ? "theme-dark" : "theme-grey");
   };
 
   // Load settings on mount
   useEffect(() => {
     invoke<Settings>("get_settings").then((s) => {
-      setSettings(s);
-      applyTheme(s.theme);
+      const themeFromBackend = s.theme as string;
+      const normalizedTheme = themeFromBackend === "light" ? "grey" : s.theme;
+      const normalizedSettings = { ...s, theme: normalizedTheme as "grey" | "dark" | "system" };
+      setSettings(normalizedSettings);
+      applyTheme(normalizedSettings.theme);
+      if (themeFromBackend === "light") {
+        invoke("save_settings", { settings: normalizedSettings }).catch(console.error);
+      }
     }).catch(console.error);
   }, []);
 
@@ -158,6 +178,39 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const unlistenShortcut = listen<{ target: string; shortcut: string }>(
+      "shortcut-configured",
+      async (event) => {
+        const { target, shortcut } = event.payload;
+        const newSettings = { ...settings };
+
+        if (target === "fullscreen") {
+          newSettings.fullscreenShortcut = shortcut;
+        } else {
+          newSettings.areaShortcut = shortcut;
+        }
+
+        try {
+          await invoke("update_shortcuts", {
+            fullscreenShortcut: newSettings.fullscreenShortcut,
+            areaShortcut: newSettings.areaShortcut,
+          });
+          setSettings(newSettings);
+          setShortcutError(null);
+        } catch (e) {
+          console.error("Failed to update shortcuts:", e);
+          const message = typeof e === "string" ? e : e instanceof Error ? e.message : "Failed to update shortcuts";
+          setShortcutError(message);
+        }
+      }
+    );
+
+    return () => {
+      unlistenShortcut.then((fn) => fn());
+    };
+  }, [settings]);
+
+  useEffect(() => {
     return () => {
       if (saveStatusTimeoutRef.current !== null) {
         window.clearTimeout(saveStatusTimeoutRef.current);
@@ -165,10 +218,31 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const panel = settingsPanelRef.current;
+    if (!panel) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest("input, textarea, select, button, option, a, label, [role='button'], .shortcut-link")) {
+        return;
+      }
+      if (target.isContentEditable || target.closest("[data-no-drag='true']")) {
+        return;
+      }
+      getCurrentWindow().startDragging().catch(() => {});
+    };
+
+    panel.addEventListener("pointerdown", handlePointerDown);
+    return () => panel.removeEventListener("pointerdown", handlePointerDown);
+  }, [showFilenameTemplate]);
+
   if (showFilenameTemplate) {
     return (
       <main className="container">
-        <div className="settings-panel template-view">
+        <div className="settings-panel template-view" ref={settingsPanelRef}>
           <FilenameTemplateEditor
             template={settings.filenameTemplate}
             onTemplateChange={(template) => updateSettings({ ...settings, filenameTemplate: template })}
@@ -192,13 +266,14 @@ function App() {
 
   return (
     <main className="container">
-      <div className="settings-panel">
+      <div className="settings-panel" ref={settingsPanelRef}>
         <div className="settings-row">
           <label>Quality: {settings.quality}%</label>
           <input
             type="range"
             min="10"
             max="100"
+            step="5"
             value={settings.quality}
             onChange={(e) => updateSettings({ ...settings, quality: parseInt(e.target.value) })}
             className="quality-slider"
@@ -219,14 +294,15 @@ function App() {
           </select>
         </div>
         <div className="settings-row prefix-row">
-          <label>
+          <div className="prefix-toggle">
             <input
               type="checkbox"
+              aria-label="Toggle note prefix"
               checked={settings.notePrefixEnabled}
               onChange={(e) => updateSettings({ ...settings, notePrefixEnabled: e.target.checked })}
             />
-            Note Prefix
-          </label>
+            <span>Note Prefix</span>
+          </div>
           <input
             type="text"
             value={settings.notePrefix}
@@ -239,17 +315,17 @@ function App() {
         </div>
         <div className="settings-row">
           <button onClick={() => setShowFilenameTemplate(true)} className="template-btn">
-            Filename Template ▶
+            Change Filename Template
           </button>
         </div>
         <div className="settings-row">
           <label>Theme:</label>
           <div className="theme-toggle">
             <button
-              className={settings.theme === "light" ? "active" : ""}
-              onClick={() => updateSettings({ ...settings, theme: "light" })}
+              className={settings.theme === "grey" ? "active" : ""}
+              onClick={() => updateSettings({ ...settings, theme: "grey" })}
             >
-              Light
+              Grey
             </button>
             <button
               className={settings.theme === "dark" ? "active" : ""}
@@ -266,8 +342,59 @@ function App() {
           </div>
         </div>
         <div className="shortcuts-hint">
-          <kbd>⌘⇧4</kbd> area · <kbd>⌘⇧3</kbd> fullscreen
+          <span
+            className="shortcut-link"
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setShortcutError(null);
+              invoke("open_shortcut_config", {
+                target: "fullscreen",
+                currentShortcut: settings.fullscreenShortcut,
+                otherShortcut: settings.areaShortcut,
+              });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                setShortcutError(null);
+                invoke("open_shortcut_config", {
+                  target: "fullscreen",
+                  currentShortcut: settings.fullscreenShortcut,
+                  otherShortcut: settings.areaShortcut,
+                });
+              }
+            }}
+          >
+            <kbd>{formatShortcutForDisplay(settings.fullscreenShortcut)}</kbd> fullscreen
+          </span>
+          {" · "}
+          <span
+            className="shortcut-link"
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setShortcutError(null);
+              invoke("open_shortcut_config", {
+                target: "area",
+                currentShortcut: settings.areaShortcut,
+                otherShortcut: settings.fullscreenShortcut,
+              });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                setShortcutError(null);
+                invoke("open_shortcut_config", {
+                  target: "area",
+                  currentShortcut: settings.areaShortcut,
+                  otherShortcut: settings.fullscreenShortcut,
+                });
+              }
+            }}
+          >
+            <kbd>{formatShortcutForDisplay(settings.areaShortcut)}</kbd> area
+          </span>
         </div>
+        {shortcutError && <div className="shortcut-error">{shortcutError}</div>}
         <div className="button-row">
           <button onClick={saveSettings} className="save-btn">
             Save

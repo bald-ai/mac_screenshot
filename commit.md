@@ -1,0 +1,14 @@
+- Switched text overlay to a resizable textarea that auto-grows to content while still supporting manual resizing.
+- Added multiline text support with Shift+Enter, including updated measurement, selection box, hit testing, and save rendering.
+- Removed the unused `editor-lean.html` file so only the in-app editor remains.
+- Made the settings window draggable by starting a window drag from non-interactive areas of the panel.
+- Tightened the note prefix toggle so only the checkbox itself toggles (text no longer clicks).
+- Added configurable global screenshot shortcuts with parsing/validation, persistence, and tray label updates, plus a dedicated shortcut-config window UI.
+- Updated the settings UI to show/edit shortcuts inline, handle duplicate errors, and include the new shortcut-config build entry.
+- Rebranded “Light” as “Grey” across settings/rename/shortcut UI with refreshed gradients and migrated stored theme values.
+- Refined filename template UI (preview layout, reset button copy, spacing/size adjustments) and small settings tweaks like slider stepping.
+- Added new docs for shortcut planning/interview notes and added the shortcut-config window + drag permission to app capabilities.
+- Ignored `NAs_dump.md` in git to avoid accidental staging of scratch dumps.
+- Removed the Cmd+Shift+F global shortcut registration and handler.
+- Disabled global shortcut handling while the shortcut-config popup is open, and normalized shortcut strings using a shared formatter across backend and UI.
+- Expanded shortcut support to include punctuation keys (e.g., brackets, semicolon, quote, comma, period, slash, minus, equals).

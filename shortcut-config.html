@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Configure Shortcut</title>
+  <link rel="stylesheet" href="/shortcut-config.css" />
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+
+    function applyTheme(theme) {
+      let isDark;
+      if (theme === 'system') {
+        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      } else {
+        isDark = theme === 'dark';
+      }
+      document.body.classList.remove('theme-grey', 'theme-dark');
+      document.body.classList.add(isDark ? 'theme-dark' : 'theme-grey');
+    }
+
+    invoke('get_settings').then(settings => {
+      applyTheme(settings.theme || 'system');
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (settings.theme === 'system') {
+          applyTheme('system');
+        }
+      });
+    }).catch(() => {
+      applyTheme('system');
+    });
+  </script>
+</head>
+<body class="theme-dark">
+  <div class="outer-frame" data-tauri-drag-region>
+    <div class="shortcut-config-frame" data-tauri-drag-region>
+      <div class="title">Press new shortcut</div>
+      <div class="recording-area" id="recordingArea">
+        <span id="shortcutDisplay">...</span>
+      </div>
+      <div class="error-message" id="errorMessage"></div>
+      <div class="button-row">
+        <button id="saveBtn" disabled>Save</button>
+        <button id="cancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+    import { emit } from '@tauri-apps/api/event';
+    import { formatShortcutForDisplay, normalizeShortcutString } from '/src/shortcutFormat';
+
+    const params = new URLSearchParams(window.location.search);
+    const target = params.get('target') || 'fullscreen';
+    const currentShortcut = params.get('current') || '';
+    const otherShortcut = params.get('other') || '';
+
+    const display = document.getElementById('shortcutDisplay');
+    const errorMsg = document.getElementById('errorMessage');
+    const saveBtn = document.getElementById('saveBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+
+    let recordedShortcut = '';
+    const normalizedOtherShortcut = normalizeShortcutString(otherShortcut) || otherShortcut;
+
+    function setError(message) {
+      errorMsg.textContent = message || '';
+    }
+
+    function keyEventToShortcut(e) {
+      const parts = [];
+      if (e.metaKey) parts.push('Cmd');
+      if (e.shiftKey) parts.push('Shift');
+      if (e.altKey) parts.push('Alt');
+      if (e.ctrlKey) parts.push('Ctrl');
+
+      const modifierKeys = ['Meta', 'Control', 'Alt', 'Shift'];
+      if (modifierKeys.includes(e.key)) {
+        return null;
+      }
+
+      if (parts.length === 0) {
+        setError('Hold at least one modifier key');
+        saveBtn.disabled = true;
+        return null;
+      }
+
+      const code = e.code;
+      const isSupported = /^Digit[0-9]$/.test(code)
+        || /^Key[A-Z]$/.test(code)
+        || /^F([1-9]|1[0-2])$/.test(code)
+        || ['Space', 'Enter', 'Tab', 'Escape', 'Backspace'].includes(code)
+        || ['BracketLeft', 'BracketRight', 'Semicolon', 'Quote', 'Comma', 'Period', 'Slash', 'Minus', 'Equal', 'Backslash', 'Backquote', 'IntlBackslash'].includes(code);
+
+      if (!isSupported) {
+        setError('Unsupported key');
+        saveBtn.disabled = true;
+        return null;
+      }
+
+      parts.push(code);
+      return normalizeShortcutString(parts.join('+'));
+    }
+
+    if (currentShortcut) {
+      display.textContent = formatShortcutForDisplay(currentShortcut);
+    }
+
+    async function saveShortcut() {
+      if (!recordedShortcut || saveBtn.disabled) return;
+      await emit('shortcut-configured', { target, shortcut: recordedShortcut });
+      await invoke('close_shortcut_config');
+    }
+
+    document.addEventListener('keydown', async (e) => {
+      e.preventDefault();
+
+      if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        invoke('close_shortcut_config');
+        return;
+      }
+      if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        await saveShortcut();
+        return;
+      }
+
+      const shortcut = keyEventToShortcut(e);
+      if (!shortcut) return;
+
+      recordedShortcut = shortcut;
+      display.textContent = formatShortcutForDisplay(shortcut);
+
+      if (shortcut === normalizedOtherShortcut) {
+        setError('This shortcut is already used');
+        saveBtn.disabled = true;
+      } else {
+        setError('');
+        saveBtn.disabled = false;
+      }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      await saveShortcut();
+    });
+
+    cancelBtn.addEventListener('click', async () => {
+      await invoke('close_shortcut_config');
+    });
+  </script>
+</body>
+</html>

@@ -15,8 +15,8 @@
       } else {
         isDark = theme === 'dark';
       }
-      document.body.classList.remove('theme-light', 'theme-dark');
-      document.body.classList.add(isDark ? 'theme-dark' : 'theme-light');
+      document.body.classList.remove('theme-grey', 'theme-dark');
+      document.body.classList.add(isDark ? 'theme-dark' : 'theme-grey');
     }
     
     // Load theme from settings
@@ -36,8 +36,8 @@
   </script>
 </head>
 <body class="theme-dark">
-  <div class="outer-frame">
-    <div class="rename-frame">
+  <div class="outer-frame" data-tauri-drag-region>
+    <div class="rename-frame" data-tauri-drag-region>
     <div class="group">
       <input type="text" id="nameInput" class="name-input" placeholder="name" autofocus />
       <input type="text" id="noteInput" class="note-input" placeholder="Annotate image with text." />

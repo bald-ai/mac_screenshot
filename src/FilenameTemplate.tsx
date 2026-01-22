@@ -110,16 +110,13 @@ function FilenameTemplate({ template, onTemplateChange, onReset }: Props) {
 
   return (
     <div className="filename-template">
-      <div className="preview-section">
-        <label>Preview:</label>
-        <div className="preview-filename">{generatePreview()}</div>
-      </div>
+      <div className="preview-filename">{generatePreview()}</div>
 
       <div className="template-header">
         {showWarning && (
-          <div className="warning-message">⚠️ Time OR Counter required</div>
+          <div className="warning-message">Time OR Counter required</div>
         )}
-        <button onClick={onReset} className="reset-btn" title="Reset to default template">↺</button>
+        <button onClick={onReset} className="reset-btn" title="Reset to default template">Reset</button>
       </div>
 
       <div className="blocks-list">

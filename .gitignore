@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Scratch dumps
+NAs_dump.md
+traycer_interviewme.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -230,9 +230,10 @@
   </div>
 
   <!-- Text input MUST be outside canvas-container to avoid overflow:hidden clipping -->
-  <input type="text" id="textInput" placeholder="Type and press Enter"
+  <textarea id="textInput" rows="1" wrap="off" spellcheck="false" placeholder="Type and press Enter"
     style="display:none; position:fixed; padding:4px 8px; font-size:24px; font-weight:bold; z-index:1000;
-    border:2px dashed #396cd8; border-radius:4px; background:transparent; color:#fff; outline:none; min-width:100px;" />
+    border:2px dashed #396cd8; border-radius:4px; background:transparent; color:#fff; outline:none;
+    min-width:100px; min-height:32px; resize:both; overflow:hidden; line-height:1.2;"></textarea>
 
 
   <!-- Toast notification for copy feedback -->
@@ -253,6 +254,72 @@
     const canvas = document.getElementById('editCanvas');
     const ctx = canvas.getContext('2d');
     const textInput = document.getElementById('textInput');
+
+    const fontSizeBase = 24;
+    const fontLineHeight = 1.2;
+
+    function resetTextInputSize() {
+      const styles = getComputedStyle(textInput);
+      const minWidth = parseFloat(styles.minWidth) || 0;
+      const minHeight = parseFloat(styles.minHeight) || 0;
+      textInput.style.width = `${minWidth}px`;
+      textInput.style.height = `${minHeight}px`;
+    }
+
+    function growTextInputToContent() {
+      if (textInput.style.display === 'none') return;
+      const styles = getComputedStyle(textInput);
+      const minWidth = parseFloat(styles.minWidth) || 0;
+      const minHeight = parseFloat(styles.minHeight) || 0;
+      const borderX = (parseFloat(styles.borderLeftWidth) || 0) + (parseFloat(styles.borderRightWidth) || 0);
+      const borderY = (parseFloat(styles.borderTopWidth) || 0) + (parseFloat(styles.borderBottomWidth) || 0);
+      const neededWidth = Math.max(minWidth, textInput.scrollWidth + borderX);
+      const neededHeight = Math.max(minHeight, textInput.scrollHeight + borderY);
+      if (neededWidth > textInput.offsetWidth) {
+        textInput.style.width = `${neededWidth}px`;
+      }
+      if (neededHeight > textInput.offsetHeight) {
+        textInput.style.height = `${neededHeight}px`;
+      }
+    }
+
+    function sanitizeTextInputValue() {
+      const sanitized = textInput.value.replace(/\r/g, '');
+      if (sanitized !== textInput.value) {
+        textInput.value = sanitized;
+      }
+    }
+
+    function getTextLines(text) {
+      return text.split(/\n/);
+    }
+
+    function measureMultilineText(targetCtx, text, fontSize) {
+      targetCtx.font = `bold ${fontSize}px -apple-system, sans-serif`;
+      const lines = getTextLines(text);
+      let maxWidth = 0;
+      for (const line of lines) {
+        const width = targetCtx.measureText(line).width;
+        if (width > maxWidth) maxWidth = width;
+      }
+      const sample = targetCtx.measureText('Mg');
+      const ascent = sample.actualBoundingBoxAscent || fontSize * 0.9;
+      const descent = sample.actualBoundingBoxDescent || fontSize * 0.2;
+      const lineHeight = fontSize * fontLineHeight;
+      const height = (lines.length - 1) * lineHeight + ascent + descent;
+      return { lines, maxWidth, lineHeight, ascent, descent, height };
+    }
+
+    function drawMultilineText(targetCtx, t, scale) {
+      const scaledFontSize = fontSizeBase * scale;
+      const lineHeight = fontSizeBase * fontLineHeight * scale;
+      targetCtx.font = `bold ${scaledFontSize}px -apple-system, sans-serif`;
+      targetCtx.fillStyle = t.color;
+      const lines = getTextLines(t.text);
+      lines.forEach((line, i) => {
+        targetCtx.fillText(line, t.x * scale, t.y * scale + i * lineHeight);
+      });
+    }
 
     let currentTool = 'pen';
     let currentColor = '#ff3b30';
@@ -437,21 +504,18 @@
       }
       
       // Draw all text objects on top (coordinates in image space, scaled for display)
-      const fontSizeBase = 24;
       textObjects.forEach(t => {
-        const scaledFontSize = fontSizeBase * scaleRatio;
-        ctx.font = `bold ${scaledFontSize}px -apple-system, sans-serif`;
-        ctx.fillStyle = t.color;
-        ctx.fillText(t.text, t.x * scaleRatio, t.y * scaleRatio);
+        drawMultilineText(ctx, t, scaleRatio);
         // Draw selection box if selected
         if (t.id === selectedTextId) {
-          const metrics = ctx.measureText(t.text);
+          const metrics = measureMultilineText(ctx, t.text, fontSizeBase * scaleRatio);
+          const pad = 4;
+          const boxX = t.x * scaleRatio - pad;
+          const boxY = (t.y * scaleRatio - metrics.ascent) - pad;
           ctx.strokeStyle = '#396cd8';
           ctx.lineWidth = 1;
           ctx.setLineDash([4, 2]);
-          const boxX = t.x * scaleRatio - 4;
-          const boxY = t.y * scaleRatio - 22 * scaleRatio;
-          ctx.strokeRect(boxX, boxY, metrics.width + 8, 30 * scaleRatio);
+          ctx.strokeRect(boxX, boxY, metrics.maxWidth + pad * 2, metrics.height + pad * 2);
           ctx.setLineDash([]);
         }
       });
@@ -461,14 +525,15 @@
     function getTextAtPoint(canvasX, canvasY) {
       const imgX = canvasX / scaleRatio;
       const imgY = canvasY / scaleRatio;
-      const fontSizeBase = 24;
       // Use original resolution for measurement
-      editCtx.font = `bold ${fontSizeBase}px -apple-system, sans-serif`;
       for (let i = textObjects.length - 1; i >= 0; i--) {
         const t = textObjects[i];
-        const metrics = editCtx.measureText(t.text);
-        if (imgX >= t.x - 4 && imgX <= t.x + metrics.width + 4 &&
-            imgY >= t.y - 22 && imgY <= t.y + 8) {
+        const metrics = measureMultilineText(editCtx, t.text, fontSizeBase);
+        const pad = 4;
+        const top = t.y - metrics.ascent - pad;
+        const bottom = t.y + (metrics.lines.length - 1) * metrics.lineHeight + metrics.descent + pad;
+        if (imgX >= t.x - pad && imgX <= t.x + metrics.maxWidth + pad &&
+            imgY >= top && imgY <= bottom) {
           return t;
         }
       }
@@ -579,6 +644,10 @@
       textInput.style.color = color;
       textInput.style.fontSize = `${24 * scaleRatio}px`;
       textInput.value = existingText;
+      resetTextInputSize();
+      sanitizeTextInputValue();
+      growTextInputToContent();
+      requestAnimationFrame(growTextInputToContent);
       setTimeout(() => { textInput.focus(); textInput.select(); }, 10);
     }
 
@@ -743,8 +812,9 @@
       if (isCommittingText) return;
       isCommittingText = true;
 
-      const text = textInput.value.trim();
-      if (text) {
+      const rawText = textInput.value.replace(/\r/g, '');
+      const text = rawText.replace(/\s+$/g, '');
+      if (text.trim()) {
         if (editingTextId) {
           // Update existing text
           const t = textObjects.find(t => t.id === editingTextId);
@@ -780,13 +850,18 @@
     }
 
     textInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         commitText();
       } else if (e.key === 'Escape') {
         e.preventDefault();
         cancelText();
       }
+    });
+
+    textInput.addEventListener('input', () => {
+      sanitizeTextInputValue();
+      growTextInputToContent();
     });
 
     textInput.addEventListener('blur', () => {
@@ -824,9 +899,7 @@
 
       // Draw text objects at full resolution (already in image space)
       textObjects.forEach(t => {
-        saveCtx.font = `bold 24px -apple-system, sans-serif`;
-        saveCtx.fillStyle = t.color;
-        saveCtx.fillText(t.text, t.x, t.y);
+        drawMultilineText(saveCtx, t, 1);
       });
 
       return new Promise(resolve => saveCanvas.toBlob(resolve, 'image/png'));

@@ -8,7 +8,7 @@ use tauri::{
     webview::WebviewWindowBuilder,
     Emitter, Manager, WindowEvent, State,
 };
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,10 +54,22 @@ pub struct Settings {
     pub filename_template: FilenameTemplate,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_fullscreen_shortcut")]
+    pub fullscreen_shortcut: String,
+    #[serde(default = "default_area_shortcut")]
+    pub area_shortcut: String,
 }
 
 fn default_theme() -> String {
     "system".to_string()
+}
+
+fn default_fullscreen_shortcut() -> String {
+    "Cmd+Shift+3".to_string()
+}
+
+fn default_area_shortcut() -> String {
+    "Cmd+Shift+4".to_string()
 }
 
 impl Default for Settings {
@@ -69,12 +81,16 @@ impl Default for Settings {
             note_prefix: String::new(),
             filename_template: FilenameTemplate::default(),
             theme: "system".to_string(),
+            fullscreen_shortcut: default_fullscreen_shortcut(),
+            area_shortcut: default_area_shortcut(),
         }
     }
 }
 
 pub struct AppState {
     pub settings: Mutex<Settings>,
+    pub active_fullscreen_shortcut: Mutex<Shortcut>,
+    pub active_area_shortcut: Mutex<Shortcut>,
 }
 
 fn get_settings_path() -> std::path::PathBuf {
@@ -86,7 +102,10 @@ fn load_settings_from_file() -> Settings {
     let path = get_settings_path();
     if path.exists() {
         if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(settings) = serde_json::from_str(&content) {
+            if let Ok(mut settings) = serde_json::from_str::<Settings>(&content) {
+                if settings.theme == "light" {
+                    settings.theme = "grey".to_string();
+                }
                 return settings;
             }
         }
@@ -113,6 +132,97 @@ fn save_settings(state: State<AppState>, settings: Settings) -> Result<(), Strin
     let mut current = state.settings.lock().unwrap();
     *current = settings.clone();
     save_settings_to_file(&settings)
+}
+
+#[tauri::command]
+async fn update_shortcuts(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    fullscreen_shortcut: String,
+    area_shortcut: String,
+) -> Result<(), String> {
+    let fullscreen_shortcut = normalize_shortcut_string(&fullscreen_shortcut)?;
+    let area_shortcut = normalize_shortcut_string(&area_shortcut)?;
+    let new_full = parse_shortcut(&fullscreen_shortcut)?;
+    let new_area = parse_shortcut(&area_shortcut)?;
+    if new_full.id() == new_area.id() {
+        return Err("Fullscreen and area shortcuts must be different".to_string());
+    }
+
+    let (old_full_str, old_area_str) = {
+        let settings = state.settings.lock().unwrap();
+        (settings.fullscreen_shortcut.clone(), settings.area_shortcut.clone())
+    };
+
+    let old_full = parse_shortcut(&old_full_str).ok();
+    let old_area = parse_shortcut(&old_area_str).ok();
+
+    let global_shortcut = app.global_shortcut();
+
+    if let Some(ref s) = old_full {
+        let _ = global_shortcut.unregister(*s);
+    }
+    if let Some(ref s) = old_area {
+        let _ = global_shortcut.unregister(*s);
+    }
+
+    if let Err(e) = global_shortcut.register(new_full) {
+        if let Some(ref s) = old_full {
+            let _ = global_shortcut.register(*s);
+        }
+        if let Some(ref s) = old_area {
+            let _ = global_shortcut.register(*s);
+        }
+        return Err(format!("Failed to register fullscreen shortcut: {}", e));
+    }
+
+    if let Err(e) = global_shortcut.register(new_area) {
+        let _ = global_shortcut.unregister(new_full);
+        if let Some(ref s) = old_full {
+            let _ = global_shortcut.register(*s);
+        }
+        if let Some(ref s) = old_area {
+            let _ = global_shortcut.register(*s);
+        }
+        return Err(format!("Failed to register area shortcut: {}", e));
+    }
+
+    let settings_snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.fullscreen_shortcut = fullscreen_shortcut;
+        settings.area_shortcut = area_shortcut;
+        settings.clone()
+    };
+
+    *state.active_fullscreen_shortcut.lock().unwrap() = new_full;
+    *state.active_area_shortcut.lock().unwrap() = new_area;
+    if let Err(e) = save_settings_to_file(&settings_snapshot) {
+        let mut settings = state.settings.lock().unwrap();
+        settings.fullscreen_shortcut = old_full_str.clone();
+        settings.area_shortcut = old_area_str.clone();
+        drop(settings);
+
+        let _ = global_shortcut.unregister(new_full);
+        let _ = global_shortcut.unregister(new_area);
+        if let Some(ref s) = old_full {
+            let _ = global_shortcut.register(*s);
+        }
+        if let Some(ref s) = old_area {
+            let _ = global_shortcut.register(*s);
+        }
+        if let Some(s) = old_full {
+            *state.active_fullscreen_shortcut.lock().unwrap() = s;
+        }
+        if let Some(s) = old_area {
+            *state.active_area_shortcut.lock().unwrap() = s;
+        }
+
+        return Err(e);
+    }
+
+    update_tray_labels(&app)?;
+
+    Ok(())
 }
 
 fn generate_temp_screenshot_path(extension: &str) -> String {
@@ -451,6 +561,46 @@ fn close_rename_popup(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+fn open_shortcut_config(
+    app: tauri::AppHandle,
+    target: String,
+    current_shortcut: String,
+    other_shortcut: String,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("shortcut-config") {
+        let _ = window.close();
+    }
+
+    let url = format!(
+        "/shortcut-config.html?target={}&current={}&other={}",
+        urlencoding::encode(&target),
+        urlencoding::encode(&current_shortcut),
+        urlencoding::encode(&other_shortcut)
+    );
+
+    WebviewWindowBuilder::new(&app, "shortcut-config", tauri::WebviewUrl::App(url.into()))
+        .title("Configure Shortcut")
+        .inner_size(260.0, 180.0)
+        .resizable(false)
+        .always_on_top(true)
+        .center()
+        .focused(true)
+        .decorations(false)
+        .transparent(true)
+        .build()
+        .map_err(|e| format!("Failed to open shortcut config: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn close_shortcut_config(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("shortcut-config") {
+        let _ = window.close();
+    }
+}
+
+#[tauri::command]
 fn delete_screenshot(app: tauri::AppHandle, filepath: String) -> Result<(), String> {
     // Delete the file
     std::fs::remove_file(&filepath)
@@ -707,55 +857,396 @@ fn copy_file_to_clipboard(filepath: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct ShortcutParts {
+    modifiers: Modifiers,
+    key: Code,
+}
+
+fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
+    let parts = parse_shortcut_parts(shortcut_str)?;
+    Ok(Shortcut::new(Some(parts.modifiers), parts.key))
+}
+
+fn normalize_and_parse(shortcut_str: &str) -> Result<(String, Shortcut), String> {
+    let parts = parse_shortcut_parts(shortcut_str)?;
+    let normalized = shortcut_parts_to_string(&parts)?;
+    Ok((normalized, Shortcut::new(Some(parts.modifiers), parts.key)))
+}
+
+fn normalize_shortcut_string(shortcut_str: &str) -> Result<String, String> {
+    let parts = parse_shortcut_parts(shortcut_str)?;
+    shortcut_parts_to_string(&parts)
+}
+
+fn parse_shortcut_parts(shortcut_str: &str) -> Result<ShortcutParts, String> {
+    let parts: Vec<&str> = shortcut_str.split('+').collect();
+    if parts.len() < 2 {
+        return Err("Shortcut must have at least one modifier and one key".to_string());
+    }
+
+    let mut modifiers = Modifiers::empty();
+    let mut key_code: Option<Code> = None;
+
+    for part in parts {
+        let token = part.trim();
+        if token.is_empty() {
+            return Err("Shortcut contains an empty token".to_string());
+        }
+
+        match token.to_lowercase().as_str() {
+            "cmd" | "command" | "super" | "meta" => modifiers |= Modifiers::SUPER,
+            "shift" => modifiers |= Modifiers::SHIFT,
+            "alt" | "option" => modifiers |= Modifiers::ALT,
+            "ctrl" | "control" => modifiers |= Modifiers::CONTROL,
+            _ => {
+                if key_code.is_some() {
+                    return Err("Shortcut must have only one main key".to_string());
+                }
+                key_code = Some(string_to_code(token)?);
+            }
+        }
+    }
+
+    let code = key_code.ok_or("No key specified in shortcut")?;
+    if modifiers.is_empty() {
+        return Err("At least one modifier required".to_string());
+    }
+
+    Ok(ShortcutParts { modifiers, key: code })
+}
+
+fn string_to_code(s: &str) -> Result<Code, String> {
+    match s.to_lowercase().as_str() {
+        "0" | "digit0" => Ok(Code::Digit0),
+        "1" | "digit1" => Ok(Code::Digit1),
+        "2" | "digit2" => Ok(Code::Digit2),
+        "3" | "digit3" => Ok(Code::Digit3),
+        "4" | "digit4" => Ok(Code::Digit4),
+        "5" | "digit5" => Ok(Code::Digit5),
+        "6" | "digit6" => Ok(Code::Digit6),
+        "7" | "digit7" => Ok(Code::Digit7),
+        "8" | "digit8" => Ok(Code::Digit8),
+        "9" | "digit9" => Ok(Code::Digit9),
+        "a" | "keya" => Ok(Code::KeyA),
+        "b" | "keyb" => Ok(Code::KeyB),
+        "c" | "keyc" => Ok(Code::KeyC),
+        "d" | "keyd" => Ok(Code::KeyD),
+        "e" | "keye" => Ok(Code::KeyE),
+        "f" | "keyf" => Ok(Code::KeyF),
+        "g" | "keyg" => Ok(Code::KeyG),
+        "h" | "keyh" => Ok(Code::KeyH),
+        "i" | "keyi" => Ok(Code::KeyI),
+        "j" | "keyj" => Ok(Code::KeyJ),
+        "k" | "keyk" => Ok(Code::KeyK),
+        "l" | "keyl" => Ok(Code::KeyL),
+        "m" | "keym" => Ok(Code::KeyM),
+        "n" | "keyn" => Ok(Code::KeyN),
+        "o" | "keyo" => Ok(Code::KeyO),
+        "p" | "keyp" => Ok(Code::KeyP),
+        "q" | "keyq" => Ok(Code::KeyQ),
+        "r" | "keyr" => Ok(Code::KeyR),
+        "s" | "keys" => Ok(Code::KeyS),
+        "t" | "keyt" => Ok(Code::KeyT),
+        "u" | "keyu" => Ok(Code::KeyU),
+        "v" | "keyv" => Ok(Code::KeyV),
+        "w" | "keyw" => Ok(Code::KeyW),
+        "x" | "keyx" => Ok(Code::KeyX),
+        "y" | "keyy" => Ok(Code::KeyY),
+        "z" | "keyz" => Ok(Code::KeyZ),
+        "f1" => Ok(Code::F1),
+        "f2" => Ok(Code::F2),
+        "f3" => Ok(Code::F3),
+        "f4" => Ok(Code::F4),
+        "f5" => Ok(Code::F5),
+        "f6" => Ok(Code::F6),
+        "f7" => Ok(Code::F7),
+        "f8" => Ok(Code::F8),
+        "f9" => Ok(Code::F9),
+        "f10" => Ok(Code::F10),
+        "f11" => Ok(Code::F11),
+        "f12" => Ok(Code::F12),
+        "space" => Ok(Code::Space),
+        "enter" => Ok(Code::Enter),
+        "tab" => Ok(Code::Tab),
+        "escape" | "esc" => Ok(Code::Escape),
+        "backspace" => Ok(Code::Backspace),
+        "minus" | "-" => Ok(Code::Minus),
+        "equal" | "equals" | "=" => Ok(Code::Equal),
+        "bracketleft" | "lbracket" | "[" => Ok(Code::BracketLeft),
+        "bracketright" | "rbracket" | "]" => Ok(Code::BracketRight),
+        "semicolon" | ";" => Ok(Code::Semicolon),
+        "quote" | "'" => Ok(Code::Quote),
+        "comma" | "," => Ok(Code::Comma),
+        "period" | "." => Ok(Code::Period),
+        "slash" | "/" => Ok(Code::Slash),
+        "backslash" | "\\" => Ok(Code::Backslash),
+        "intlbackslash" => Ok(Code::IntlBackslash),
+        "backquote" | "grave" | "`" => Ok(Code::Backquote),
+        _ => Err(format!("Unknown key: {}", s)),
+    }
+}
+
+fn code_to_string(code: Code) -> Result<String, String> {
+    match code {
+        Code::Digit0 => Ok("0".to_string()),
+        Code::Digit1 => Ok("1".to_string()),
+        Code::Digit2 => Ok("2".to_string()),
+        Code::Digit3 => Ok("3".to_string()),
+        Code::Digit4 => Ok("4".to_string()),
+        Code::Digit5 => Ok("5".to_string()),
+        Code::Digit6 => Ok("6".to_string()),
+        Code::Digit7 => Ok("7".to_string()),
+        Code::Digit8 => Ok("8".to_string()),
+        Code::Digit9 => Ok("9".to_string()),
+        Code::KeyA => Ok("A".to_string()),
+        Code::KeyB => Ok("B".to_string()),
+        Code::KeyC => Ok("C".to_string()),
+        Code::KeyD => Ok("D".to_string()),
+        Code::KeyE => Ok("E".to_string()),
+        Code::KeyF => Ok("F".to_string()),
+        Code::KeyG => Ok("G".to_string()),
+        Code::KeyH => Ok("H".to_string()),
+        Code::KeyI => Ok("I".to_string()),
+        Code::KeyJ => Ok("J".to_string()),
+        Code::KeyK => Ok("K".to_string()),
+        Code::KeyL => Ok("L".to_string()),
+        Code::KeyM => Ok("M".to_string()),
+        Code::KeyN => Ok("N".to_string()),
+        Code::KeyO => Ok("O".to_string()),
+        Code::KeyP => Ok("P".to_string()),
+        Code::KeyQ => Ok("Q".to_string()),
+        Code::KeyR => Ok("R".to_string()),
+        Code::KeyS => Ok("S".to_string()),
+        Code::KeyT => Ok("T".to_string()),
+        Code::KeyU => Ok("U".to_string()),
+        Code::KeyV => Ok("V".to_string()),
+        Code::KeyW => Ok("W".to_string()),
+        Code::KeyX => Ok("X".to_string()),
+        Code::KeyY => Ok("Y".to_string()),
+        Code::KeyZ => Ok("Z".to_string()),
+        Code::F1 => Ok("F1".to_string()),
+        Code::F2 => Ok("F2".to_string()),
+        Code::F3 => Ok("F3".to_string()),
+        Code::F4 => Ok("F4".to_string()),
+        Code::F5 => Ok("F5".to_string()),
+        Code::F6 => Ok("F6".to_string()),
+        Code::F7 => Ok("F7".to_string()),
+        Code::F8 => Ok("F8".to_string()),
+        Code::F9 => Ok("F9".to_string()),
+        Code::F10 => Ok("F10".to_string()),
+        Code::F11 => Ok("F11".to_string()),
+        Code::F12 => Ok("F12".to_string()),
+        Code::Space => Ok("Space".to_string()),
+        Code::Enter => Ok("Enter".to_string()),
+        Code::Tab => Ok("Tab".to_string()),
+        Code::Escape => Ok("Escape".to_string()),
+        Code::Backspace => Ok("Backspace".to_string()),
+        Code::Minus => Ok("-".to_string()),
+        Code::Equal => Ok("=".to_string()),
+        Code::BracketLeft => Ok("[".to_string()),
+        Code::BracketRight => Ok("]".to_string()),
+        Code::Semicolon => Ok(";".to_string()),
+        Code::Quote => Ok("'".to_string()),
+        Code::Comma => Ok(",".to_string()),
+        Code::Period => Ok(".".to_string()),
+        Code::Slash => Ok("/".to_string()),
+        Code::Backslash => Ok("\\".to_string()),
+        Code::IntlBackslash => Ok("\\".to_string()),
+        Code::Backquote => Ok("`".to_string()),
+        _ => Err(format!("Unsupported key: {:?}", code)),
+    }
+}
+
+fn shortcut_parts_to_string(parts: &ShortcutParts) -> Result<String, String> {
+    let mut tokens = Vec::new();
+
+    if parts.modifiers.contains(Modifiers::SUPER) {
+        tokens.push("Cmd".to_string());
+    }
+    if parts.modifiers.contains(Modifiers::SHIFT) {
+        tokens.push("Shift".to_string());
+    }
+    if parts.modifiers.contains(Modifiers::ALT) {
+        tokens.push("Alt".to_string());
+    }
+    if parts.modifiers.contains(Modifiers::CONTROL) {
+        tokens.push("Ctrl".to_string());
+    }
+
+    tokens.push(code_to_string(parts.key)?);
+    Ok(tokens.join("+"))
+}
+
+fn shortcut_to_display(shortcut_str: &str) -> String {
+    let normalized = normalize_shortcut_string(shortcut_str).unwrap_or_else(|_| shortcut_str.to_string());
+    normalized
+        .replace("Cmd", "⌘")
+        .replace("Shift", "⇧")
+        .replace("Alt", "⌥")
+        .replace("Ctrl", "⌃")
+        .replace("+", "")
+}
+
+fn build_tray_menu<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    settings: &Settings,
+) -> tauri::Result<Menu<R>> {
+    let full_display = shortcut_to_display(&settings.fullscreen_shortcut);
+    let area_display = shortcut_to_display(&settings.area_shortcut);
+
+    let screenshot_i = MenuItem::with_id(
+        app,
+        "screenshot",
+        format!("Screenshot Area ({})", area_display),
+        true,
+        None::<&str>,
+    )?;
+    let fullscreen_i = MenuItem::with_id(
+        app,
+        "fullscreen",
+        format!("Screenshot Full ({})", full_display),
+        true,
+        None::<&str>,
+    )?;
+    let show_i = MenuItem::with_id(app, "show", "Show App", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+    Menu::with_items(app, &[&fullscreen_i, &screenshot_i, &show_i, &quit_i])
+}
+
+fn update_tray_labels(app: &tauri::AppHandle) -> Result<(), String> {
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    let menu = build_tray_menu(app, &settings).map_err(|e| e.to_string())?;
+
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Define the shortcuts
-    let shortcut_area = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit4);
-    let shortcut_full = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit3);
-    let shortcut_focus_rename = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyF);
+    let mut initial_settings = load_settings_from_file();
+    let mut settings_changed = false;
+
+    let (mut shortcut_full, mut shortcut_area);
+
+    match normalize_and_parse(&initial_settings.fullscreen_shortcut) {
+        Ok((normalized, shortcut)) => {
+            if normalized != initial_settings.fullscreen_shortcut {
+                initial_settings.fullscreen_shortcut = normalized;
+                settings_changed = true;
+            }
+            shortcut_full = shortcut;
+        }
+        Err(_) => {
+            initial_settings.fullscreen_shortcut = default_fullscreen_shortcut();
+            settings_changed = true;
+            let (normalized, shortcut) = normalize_and_parse(&initial_settings.fullscreen_shortcut)
+                .unwrap_or_else(|_| {
+                    (
+                        default_fullscreen_shortcut(),
+                        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit3),
+                    )
+                });
+            initial_settings.fullscreen_shortcut = normalized;
+            shortcut_full = shortcut;
+        }
+    }
+
+    match normalize_and_parse(&initial_settings.area_shortcut) {
+        Ok((normalized, shortcut)) => {
+            if normalized != initial_settings.area_shortcut {
+                initial_settings.area_shortcut = normalized;
+                settings_changed = true;
+            }
+            shortcut_area = shortcut;
+        }
+        Err(_) => {
+            initial_settings.area_shortcut = default_area_shortcut();
+            settings_changed = true;
+            let (normalized, shortcut) = normalize_and_parse(&initial_settings.area_shortcut)
+                .unwrap_or_else(|_| {
+                    (
+                        default_area_shortcut(),
+                        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit4),
+                    )
+                });
+            initial_settings.area_shortcut = normalized;
+            shortcut_area = shortcut;
+        }
+    }
+
+    if shortcut_full.id() == shortcut_area.id() {
+        initial_settings.fullscreen_shortcut = default_fullscreen_shortcut();
+        initial_settings.area_shortcut = default_area_shortcut();
+        settings_changed = true;
+
+        let (normalized_full, full) = normalize_and_parse(&initial_settings.fullscreen_shortcut)
+            .unwrap_or_else(|_| {
+                (
+                    default_fullscreen_shortcut(),
+                    Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit3),
+                )
+            });
+        let (normalized_area, area) = normalize_and_parse(&initial_settings.area_shortcut)
+            .unwrap_or_else(|_| {
+                (
+                    default_area_shortcut(),
+                    Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit4),
+                )
+            });
+        initial_settings.fullscreen_shortcut = normalized_full;
+        initial_settings.area_shortcut = normalized_area;
+        shortcut_full = full;
+        shortcut_area = area;
+    }
+
+    if settings_changed {
+        let _ = save_settings_to_file(&initial_settings);
+    }
 
     tauri::Builder::default()
         .manage(AppState {
-            settings: Mutex::new(load_settings_from_file()),
+            settings: Mutex::new(initial_settings),
+            active_fullscreen_shortcut: Mutex::new(shortcut_full),
+            active_area_shortcut: Mutex::new(shortcut_area),
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([shortcut_area, shortcut_full, shortcut_focus_rename])
+                .with_shortcuts([shortcut_area, shortcut_full])
                 .unwrap()
                 .with_handler(move |app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        if shortcut.key == Code::Digit4 {
+                        if app.get_webview_window("shortcut-config").is_some() {
+                            return;
+                        }
+                        let state = app.state::<AppState>();
+                        let fullscreen_shortcut = *state.active_fullscreen_shortcut.lock().unwrap();
+                        let area_shortcut = *state.active_area_shortcut.lock().unwrap();
+
+                        if shortcut.id() == area_shortcut.id() {
                             // Cmd+Shift+4: Select area screenshot
                             let _ = app.emit("take-screenshot", ());
-                        } else if shortcut.key == Code::Digit3 {
+                        } else if shortcut.id() == fullscreen_shortcut.id() {
                             // Cmd+Shift+3: Full screen screenshot
                             let _ = app.emit("take-fullscreen-screenshot", ());
-                        } else if shortcut.key == Code::KeyF {
-                            // Cmd+Shift+F: Focus rename window
-                            if let Some(window) = app.get_webview_window("rename") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
                         }
                     }
                 })
                 .build(),
         )
         .setup(|app| {
-            // Create menu items
-            let screenshot_i = MenuItem::with_id(app, "screenshot", "Screenshot Area (⌘⇧4)", true, None::<&str>)?;
-            let fullscreen_i = MenuItem::with_id(app, "fullscreen", "Screenshot Full (⌘⇧3)", true, None::<&str>)?;
-            let show_i = MenuItem::with_id(app, "show", "Show App", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-
-            // Create the menu
-            let menu = Menu::with_items(app, &[&screenshot_i, &fullscreen_i, &show_i, &quit_i])?;
+            let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+            let menu = build_tray_menu(app.handle(), &settings)?;
 
             // Build the tray icon
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -795,7 +1286,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, get_settings, save_settings])
+        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
         .on_window_event(|window, event| {
             // Only prevent close for main window, let rename popup close normally
             if window.label() == "main" {
