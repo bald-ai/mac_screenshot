@@ -1,7 +1,8 @@
 # AGENTS.md
 
 ## My rules
+- Commit messages should be the short summary only; omit tests.
 
 
-## Termianl commands
+## Terminal commands
 - "rm -rf *": "deny"
