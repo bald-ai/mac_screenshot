@@ -13,13 +13,18 @@
       <input type="text" id="nameInput" class="name-input" placeholder="name" autofocus />
       <input type="text" id="noteInput" class="note-input" placeholder="Annotate image with text." />
       <div class="tooltip">
-        <span>↵ save</span>
-        <span class="sep">·</span>
-        <span>⌘↵ copy+save</span>
-        <span class="sep">·</span>
-        <span>esc delete</span>
-        <span class="sep">·</span>
-        <span>tab save+edit</span>
+        <div class="tooltip-row">
+          <span>↵ save</span>
+          <span class="sep">·</span>
+          <span>⌘↵ copy+save</span>
+          <span class="sep">·</span>
+          <span>⌘⌫ copy+del</span>
+        </div>
+        <div class="tooltip-row">
+          <span>esc delete</span>
+          <span class="sep">·</span>
+          <span>tab save+edit</span>
+        </div>
       </div>
     </div>
     <canvas id="noteCanvas" style="display:none;"></canvas>
@@ -32,6 +37,7 @@
     const params = new URLSearchParams(window.location.search);
     let filepath = params.get('path') || '';
     const initialNote = params.get('note') || '';
+    let burnedNote = params.get('burnedNote') || '';
     const initialFilename = filepath.split('/').pop()?.replace(/\.[^.]+$/, '') || 'screenshot';
 
     const input = document.getElementById('nameInput');
@@ -40,7 +46,7 @@
     const ctx = canvas.getContext('2d');
 
     // Load settings for quality and prefix
-    let settings = { quality: 50, maxWidth: 1280, notePrefixEnabled: false, notePrefix: '' };
+    let settings = { quality: 70, maxWidth: 1024, notePrefixEnabled: false, notePrefix: '' };
     invoke('get_settings').then(s => { settings = s; }).catch(console.error);
 
     // Pre-populate rename input and note
@@ -65,8 +71,8 @@
       const finalNote = (settings.notePrefixEnabled && settings.notePrefix) 
         ? settings.notePrefix + note 
         : note;
-      // Read the original image
-      const base64 = await invoke('read_image_base64', { filepath });
+      // Read from original backup if it exists, otherwise from main file
+      const base64 = await invoke('read_original_image_base64', { filepath });
       const wrapText = (text, maxWidth, context) => {
         if (!text) return [''];
 
@@ -193,15 +199,25 @@
       // First rename if needed
       filepath = await saveRenameIfNeeded();
       
-      // If there's a note, burn it into the image
       const note = noteInput.value.trim();
-      if (note) {
-        try {
-          const annotatedBase64 = await burnNoteIntoImage(note);
-          await invoke('save_edited_screenshot', { filepath, base64Data: annotatedBase64 });
-        } catch (e) {
-          console.error('Failed to add note:', e);
+      
+      // Only re-burn note if it changed from what's already in the image
+      if (note !== burnedNote) {
+        if (note) {
+          try {
+            const annotatedBase64 = await burnNoteIntoImage(note);
+            await invoke('save_edited_screenshot', { filepath, base64Data: annotatedBase64 });
+          } catch (e) {
+            console.error('Failed to add note:', e);
+          }
         }
+      }
+      
+      // Cleanup the backup on final save
+      try {
+        await invoke('delete_original_backup', { filepath });
+      } catch (e) {
+        console.error('Failed to delete backup:', e);
       }
       
       // Copy to clipboard if requested
@@ -220,13 +236,35 @@
       await invoke('delete_screenshot', { filepath });
     }
 
+    async function doCopyAndDelete() {
+      filepath = await saveRenameIfNeeded();
+      
+      const note = noteInput.value.trim();
+      if (note && note !== burnedNote) {
+        try {
+          const annotatedBase64 = await burnNoteIntoImage(note);
+          await invoke('save_edited_screenshot', { filepath, base64Data: annotatedBase64 });
+        } catch (e) {
+          console.error('Failed to add note:', e);
+        }
+      }
+      
+      try {
+        await invoke('copy_file_to_clipboard', { filepath });
+      } catch (e) {
+        console.error('Failed to copy to clipboard:', e);
+      }
+      
+      await invoke('delete_screenshot', { filepath });
+    }
+
     async function openEditor() {
       // Save typed name first
       filepath = await saveRenameIfNeeded();
       
       // Pass the note to the editor so it can be passed back when returning
       const note = noteInput.value.trim();
-      await invoke('open_editor_window', { filepath, note });
+      await invoke('open_editor_window', { filepath, note, burned_note: burnedNote });
     }
 
     // Global keyboard shortcuts - work when window is focused
@@ -235,6 +273,11 @@
         // Cmd+Enter: copy + save + close
         e.preventDefault(); 
         doSave(true); 
+      }
+      else if (e.key === 'Backspace' && e.metaKey) {
+        // Cmd+Backspace: copy + delete
+        e.preventDefault();
+        doCopyAndDelete();
       }
       else if (e.key === 'Enter') { e.preventDefault(); doSave(); }
       else if (e.key === 'Escape') { e.preventDefault(); doDelete(); }

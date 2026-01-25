@@ -119,7 +119,11 @@
       align-items: center;
       justify-content: center;
       background: transparent;
-      overflow: hidden;
+      overflow: auto;
+    }
+    .canvas-container.zoomed {
+      align-items: flex-start;
+      justify-content: flex-start;
     }
     #editCanvas { cursor: crosshair; }
 
@@ -176,14 +180,14 @@
       <div class="divider"></div>
       <!-- Color picker -->
       <div class="color-picker-container">
-        <button class="color-indicator" id="colorToggle" style="background:#ff3b30;" title="Colors (K)"></button>
+        <button class="color-indicator" id="colorToggle" style="background:#ff3b30;" title="Colors (K or Q)"></button>
         <div class="color-picker" id="colorPicker">
           <button class="color-btn active" data-color="#ff3b30" style="background:#ff3b30;" tabindex="-1"></button>
           <button class="color-btn" data-color="#007aff" style="background:#007aff;" tabindex="-1"></button>
           <button class="color-btn" data-color="#34c759" style="background:#34c759;" tabindex="-1"></button>
+          <button class="color-btn" data-color="#000" style="background:#000;" tabindex="-1"></button>
           <button class="color-btn" data-color="#ffcc00" style="background:#ffcc00;" tabindex="-1"></button>
           <button class="color-btn" data-color="#fff" style="background:#fff;" tabindex="-1"></button>
-          <button class="color-btn" data-color="#000" style="background:#000;" tabindex="-1"></button>
         </div>
       </div>
       <div class="divider"></div>
@@ -194,6 +198,15 @@
       <!-- Delete/Clear -->
       <button class="tool" id="clearBtn" title="Clear">
         <svg viewBox="0 0 24 24"><path d="M4 6h16M9 6V4h6v2M6 6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6M10 10v6M14 10v6"/></svg>
+      </button>
+      <div class="divider"></div>
+      <!-- Zoom controls -->
+      <button class="tool" id="zoomOutBtn" title="Zoom Out (Cmd+-)">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35M8 11h6"/></svg>
+      </button>
+      <span id="zoomLabel" style="font-size:11px; min-width:36px; text-align:center; color:#ccc;">100%</span>
+      <button class="tool" id="zoomInBtn" title="Zoom In (Cmd++)">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35M8 11h6M11 8v6"/></svg>
       </button>
       <div class="divider"></div>
       <!-- Close -->
@@ -216,7 +229,8 @@
   <textarea id="textInput" rows="1" wrap="off" spellcheck="false" placeholder="Type and press Enter"
     style="display:none; position:fixed; padding:4px 8px; font-size:24px; font-weight:bold; z-index:1000;
     border:2px dashed #396cd8; border-radius:4px; background:transparent; color:#fff; outline:none;
-    min-width:100px; min-height:32px; resize:both; overflow:hidden; line-height:1.2;"></textarea>
+    min-width:100px; min-height:32px; resize:both; overflow:hidden; line-height:1.2;
+    -webkit-text-stroke: 2px rgba(0, 0, 0, 0.9); paint-order: stroke fill;"></textarea>
 
 
   <!-- Toast notification for copy feedback -->
@@ -229,9 +243,10 @@
     const filepath = params.get('path') || '';
     const editorPadding = parseInt(params.get('padding') || '40', 10);
     const pendingNote = params.get('note') || '';
+    let burnedNote = params.get('burnedNote') || '';
 
     // Load settings for prefix
-    let settings = { quality: 50, maxWidth: 1280, notePrefixEnabled: false, notePrefix: '' };
+    let settings = { quality: 70, maxWidth: 1024, notePrefixEnabled: false, notePrefix: '' };
     invoke('get_settings').then(s => { settings = s; }).catch(console.error);
 
     const canvas = document.getElementById('editCanvas');
@@ -240,6 +255,7 @@
 
     const fontSizeBase = 24;
     const fontLineHeight = 1.2;
+    const textFontFamily = '-apple-system, sans-serif';
 
     function resetTextInputSize() {
       const styles = getComputedStyle(textInput);
@@ -278,7 +294,7 @@
     }
 
     function measureMultilineText(targetCtx, text, fontSize) {
-      targetCtx.font = `bold ${fontSize}px -apple-system, sans-serif`;
+      targetCtx.font = `bold ${fontSize}px ${textFontFamily}`;
       const lines = getTextLines(text);
       let maxWidth = 0;
       for (const line of lines) {
@@ -296,9 +312,23 @@
     function drawMultilineText(targetCtx, t, scale) {
       const scaledFontSize = fontSizeBase * scale;
       const lineHeight = fontSizeBase * fontLineHeight * scale;
-      targetCtx.font = `bold ${scaledFontSize}px -apple-system, sans-serif`;
-      targetCtx.fillStyle = t.color;
+      targetCtx.font = `bold ${scaledFontSize}px ${textFontFamily}`;
+      
       const lines = getTextLines(t.text);
+      const strokeWidth = 3 * scale;
+      
+      // Draw outline first (stroke) - black for yellow/white, white for others
+      const isLight = t.color === '#fff' || t.color === '#ffffff' || t.color === '#ffcc00' || t.color.toLowerCase() === 'white' || t.color.toLowerCase() === 'yellow';
+      targetCtx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.9)' : 'rgba(255, 255, 255, 0.9)';
+      targetCtx.lineWidth = strokeWidth;
+      targetCtx.lineJoin = 'round';
+      targetCtx.miterLimit = 2;
+      lines.forEach((line, i) => {
+        targetCtx.strokeText(line, t.x * scale, t.y * scale + i * lineHeight);
+      });
+      
+      // Draw fill on top
+      targetCtx.fillStyle = t.color;
       lines.forEach((line, i) => {
         targetCtx.fillText(line, t.x * scale, t.y * scale + i * lineHeight);
       });
@@ -314,6 +344,12 @@
     let originalWidth = 0, originalHeight = 0;
     let scaleRatio = 1;
     let isCommittingText = false;
+
+    // Zoom state
+    let zoomLevel = 1;
+    const ZOOM_MIN = 0.25;
+    const ZOOM_MAX = 4;
+    const ZOOM_STEP = 0.05;
 
     // Offscreen edit layer at original resolution - fixes resize issues
     let editLayer = null;
@@ -422,15 +458,24 @@
     // Load image (with pending note composited if present)
     async function loadImage() {
       try {
-        const dataUrl = await invoke('read_image_base64', { filepath });
+        const noteChanged = pendingNote !== burnedNote;
+        let dataUrl;
+        
+        if (noteChanged && pendingNote) {
+          await invoke('ensure_original_backup', { filepath });
+          dataUrl = await invoke('read_original_image_base64', { filepath });
+        } else {
+          dataUrl = await invoke('read_image_base64', { filepath });
+        }
+        
         const img = new Image();
         img.onload = () => {
-          // If there's a pending note, composite it into the base image
-          if (pendingNote) {
+          if (noteChanged && pendingNote) {
             const notedCanvas = buildNotedBaseCanvas(img, pendingNote);
             baseImage = notedCanvas;
             originalWidth = notedCanvas.width;
             originalHeight = notedCanvas.height;
+            burnedNote = pendingNote;
           } else {
             baseImage = img;
             originalWidth = img.width;
@@ -461,11 +506,58 @@
       let w = originalWidth, h = originalHeight;
       if (w > maxW) { h = h * (maxW / w); w = maxW; }
       if (h > maxH) { w = w * (maxH / h); h = maxH; }
-      canvas.width = Math.floor(w);
-      canvas.height = Math.floor(h);
+      // Apply zoom
+      w = Math.floor(w * zoomLevel);
+      h = Math.floor(h * zoomLevel);
+      canvas.width = w;
+      canvas.height = h;
       scaleRatio = canvas.width / originalWidth;
+      // Toggle zoomed class for scroll behavior
+      container.classList.toggle('zoomed', zoomLevel > 1);
       redrawAll();
       if (history.length === 0) saveState();
+    }
+
+    function updateZoomLabel() {
+      document.getElementById('zoomLabel').textContent = Math.round(zoomLevel * 100) + '%';
+    }
+
+    function setZoom(newZoom, centerOnMouse = false, mouseX = 0, mouseY = 0) {
+      const container = document.querySelector('.canvas-container');
+      const oldZoom = zoomLevel;
+      zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom));
+      if (zoomLevel === oldZoom) return;
+      
+      // Store scroll ratios before resize
+      const scrollRatioX = container.scrollWidth > container.clientWidth 
+        ? container.scrollLeft / (container.scrollWidth - container.clientWidth) 
+        : 0.5;
+      const scrollRatioY = container.scrollHeight > container.clientHeight 
+        ? container.scrollTop / (container.scrollHeight - container.clientHeight) 
+        : 0.5;
+      
+      resizeCanvas();
+      updateZoomLabel();
+      
+      // Restore scroll position proportionally
+      if (container.scrollWidth > container.clientWidth) {
+        container.scrollLeft = scrollRatioX * (container.scrollWidth - container.clientWidth);
+      }
+      if (container.scrollHeight > container.clientHeight) {
+        container.scrollTop = scrollRatioY * (container.scrollHeight - container.clientHeight);
+      }
+    }
+
+    function zoomIn() {
+      setZoom(zoomLevel + ZOOM_STEP);
+    }
+
+    function zoomOut() {
+      setZoom(zoomLevel - ZOOM_STEP);
+    }
+
+    function resetZoom() {
+      setZoom(1);
     }
 
     function drawCanvas() {
@@ -488,6 +580,7 @@
       
       // Draw all text objects on top (coordinates in image space, scaled for display)
       textObjects.forEach(t => {
+        if (t.id === editingTextId) return;
         drawMultilineText(ctx, t, scaleRatio);
         // Draw selection box if selected
         if (t.id === selectedTextId) {
@@ -621,11 +714,26 @@
     function showTextInput(imgX, imgY, existingText = '', color = currentColor) {
       const canvasRect = canvas.getBoundingClientRect();
       textInput.style.display = 'block';
+      const styles = getComputedStyle(textInput);
+      const paddingTop = parseFloat(styles.paddingTop) || 0;
+      const paddingLeft = parseFloat(styles.paddingLeft) || 0;
+      const borderTop = parseFloat(styles.borderTopWidth) || 0;
+      const borderLeft = parseFloat(styles.borderLeftWidth) || 0;
+      const scaledFontSize = fontSizeBase * scaleRatio;
+      const lineHeight = scaledFontSize * fontLineHeight;
+      ctx.font = `bold ${scaledFontSize}px ${textFontFamily}`;
+      const sample = ctx.measureText('Mg');
+      const ascent = sample.actualBoundingBoxAscent || scaledFontSize * 0.9;
+      const descent = sample.actualBoundingBoxDescent || scaledFontSize * 0.2;
+      const leading = Math.max(0, lineHeight - (ascent + descent));
+      const baselineOffset = ascent + leading / 2;
       // Convert image space to screen space for positioning
-      textInput.style.left = (canvasRect.left + imgX * scaleRatio) + 'px';
-      textInput.style.top = (canvasRect.top + imgY * scaleRatio - 24 * scaleRatio) + 'px';
+      textInput.style.left = (canvasRect.left + imgX * scaleRatio - paddingLeft - borderLeft) + 'px';
+      textInput.style.top = (canvasRect.top + imgY * scaleRatio - baselineOffset - paddingTop - borderTop) + 'px';
       textInput.style.color = color;
-      textInput.style.fontSize = `${24 * scaleRatio}px`;
+      textInput.style.fontSize = `${scaledFontSize}px`;
+      textInput.style.fontFamily = textFontFamily;
+      textInput.style.lineHeight = `${lineHeight}px`;
       textInput.value = existingText;
       resetTextInputSize();
       sanitizeTextInputValue();
@@ -967,10 +1075,18 @@
           closeColorPicker();
           return;
         }
+        // Mac Czech keyboard keys for positions 1-6: + ě š č ř ž
+        const keyToIndex = { '+': 0, 'ě': 1, 'š': 2, 'č': 3, 'ř': 4, 'ž': 5 };
+        if (e.key in keyToIndex) {
+          e.preventDefault();
+          selectColor(keyToIndex[e.key]);
+          closeColorPicker();
+          return;
+        }
       }
 
       // 'k' to open color picker
-      if (e.key === 'k' && !e.metaKey && !e.ctrlKey) {
+      if ((e.key === 'k' || e.key === 'q') && !e.metaKey && !e.ctrlKey) {
         if (textInput.style.display === 'block') return;
         e.preventDefault();
         openColorPicker();
@@ -1001,8 +1117,36 @@
         return;
       }
 
-      // Cmd+Backspace: undo all (clear)
+      // Zoom shortcuts: Cmd+=/+ to zoom in, Cmd+- to zoom out, Cmd+0 to reset
+      if (e.metaKey && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+        zoomIn();
+        return;
+      }
+      if (e.metaKey && e.key === '-') {
+        e.preventDefault();
+        zoomOut();
+        return;
+      }
+      if (e.metaKey && e.key === '0') {
+        e.preventDefault();
+        resetZoom();
+        return;
+      }
+
+      // Cmd+Backspace: copy to clipboard and delete screenshot
       if (e.metaKey && e.key === 'Backspace') {
+        if (textInput.style.display === 'block') return;
+        e.preventDefault();
+        void (async () => {
+          await copyEditedImageToClipboard();
+          await invoke('delete_screenshot', { filepath });
+        })();
+        return;
+      }
+
+      // Option+Backspace: undo all (clear)
+      if (e.altKey && e.key === 'Backspace') {
         e.preventDefault();
         textObjects = [];
         selectedTextId = null;
@@ -1056,17 +1200,30 @@
         return;
       }
 
-      // Shift+Tab: go back to rename popup
+      // Shift+Tab: save edits and go back to rename popup
       if (e.key === 'Tab' && e.shiftKey) {
-        // Don't navigate away while editing text
         if (textInput.style.display === 'block') {
           e.preventDefault();
           return;
         }
         e.preventDefault();
-        void invoke('close_editor_and_open_rename', { filepath, note: pendingNote }).catch((err) =>
-          console.error('Failed to close editor:', err),
-        );
+        void (async () => {
+          try {
+            selectedTextId = null;
+            redrawAll();
+            const blob = await getEditedImageBlob();
+            const reader = new FileReader();
+            const base64 = await new Promise((resolve, reject) => {
+              reader.onload = () => resolve(reader.result.split(',')[1]);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            await invoke('save_edited_screenshot', { filepath, base64Data: base64 });
+            await invoke('close_editor_and_open_rename', { filepath, note: pendingNote, burned_note: pendingNote });
+          } catch (err) {
+            console.error('Failed to save and close editor:', err);
+          }
+        })();
         return;
       }
 
@@ -1107,13 +1264,25 @@
       redrawAll();
     });
 
+    document.getElementById('zoomInBtn').addEventListener('click', zoomIn);
+    document.getElementById('zoomOutBtn').addEventListener('click', zoomOut);
+
+    // Wheel zoom (Cmd/Ctrl + scroll)
+    document.querySelector('.canvas-container').addEventListener('wheel', (e) => {
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        if (e.deltaY < 0) zoomIn();
+        else zoomOut();
+      }
+    }, { passive: false });
+
     document.getElementById('saveBtn').addEventListener('click', async () => {
       await saveEditedScreenshotAndClose();
     });
 
     document.getElementById('cancelBtn').addEventListener('click', async () => {
-      // Close editor and return to rename popup (handled by Rust)
-      await invoke('close_editor_and_open_rename', { filepath, note: pendingNote });
+      // Delete screenshot and close editor
+      await invoke('delete_screenshot', { filepath });
     });
 
     loadImage();

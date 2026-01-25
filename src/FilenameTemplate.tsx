@@ -14,8 +14,6 @@ interface FilenameTemplate {
 interface Props {
   template: FilenameTemplate;
   onTemplateChange: (template: FilenameTemplate) => void;
-  onBack: () => void;
-  onReset: () => void;
 }
 
 const BLOCK_LABELS: Record<string, string> = {
@@ -38,7 +36,7 @@ const PLACEHOLDER_VALUES: Record<string, string> = {
 
 const LOCKED_BLOCKS = ["time", "counter"];
 
-function FilenameTemplate({ template, onTemplateChange, onReset }: Props) {
+function FilenameTemplate({ template, onTemplateChange }: Props) {
   const [blocks, setBlocks] = useState<FilenameBlock[]>(template.blocks);
 
   useEffect(() => {
@@ -116,7 +114,6 @@ function FilenameTemplate({ template, onTemplateChange, onReset }: Props) {
         {showWarning && (
           <div className="warning-message">Time OR Counter required</div>
         )}
-        <button onClick={onReset} className="reset-btn" title="Reset to default template">Reset</button>
       </div>
 
       <div className="blocks-list">

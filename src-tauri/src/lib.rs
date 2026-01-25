@@ -69,8 +69,8 @@ fn default_area_shortcut() -> String {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            quality: 50,
-            max_width: 1280,
+            quality: 70,
+            max_width: 1024,
             note_prefix_enabled: false,
             note_prefix: String::new(),
             filename_template: FilenameTemplate::default(),
@@ -309,7 +309,7 @@ fn calculate_editor_window_size(img_width: u32, img_height: u32, padding: f64) -
     const TOOLBAR_HEIGHT: f64 = 72.0;
     
     // Constraints
-    const MIN_WIDTH: f64 = 500.0;   // Minimum to fit toolbar buttons
+    const MIN_WIDTH: f64 = 580.0;   // Minimum to fit toolbar buttons (must match min_inner_size)
     const MIN_HEIGHT: f64 = 250.0;  // Minimum usable height
     const MAX_WIDTH: f64 = 1400.0;  // Maximum window width
     const MAX_HEIGHT: f64 = 900.0;  // Maximum window height
@@ -504,6 +504,81 @@ fn read_image_base64(filepath: String) -> Result<String, String> {
     Ok(format!("data:{};base64,{}", mime_type, base64_data))
 }
 
+fn get_backup_cache_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(format!("{}/Library/Caches/screenshotapp/backups", home))
+}
+
+fn compute_path_hash(filepath: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    filepath.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn cleanup_backup_cache() {
+    let cache_dir = get_backup_cache_dir();
+    if cache_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+fn get_original_backup_path(filepath: &str) -> String {
+    let cache_dir = get_backup_cache_dir();
+    let hash = compute_path_hash(filepath);
+    format!("{}/{}.original", cache_dir.display(), hash)
+}
+
+#[tauri::command]
+fn ensure_original_backup(filepath: String) -> Result<bool, String> {
+    let backup_path = get_original_backup_path(&filepath);
+    if std::path::Path::new(&backup_path).exists() {
+        return Ok(false);
+    }
+    let cache_dir = get_backup_cache_dir();
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+    std::fs::copy(&filepath, &backup_path)
+        .map_err(|e| format!("Failed to create backup: {}", e))?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn read_original_image_base64(filepath: String) -> Result<String, String> {
+    use base64::Engine;
+    let backup_path = get_original_backup_path(&filepath);
+    let source_path = if std::path::Path::new(&backup_path).exists() {
+        backup_path
+    } else {
+        filepath.clone()
+    };
+    let bytes = std::fs::read(&source_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let mime_type = if filepath.to_lowercase().ends_with(".jpg") 
+        || filepath.to_lowercase().ends_with(".jpeg") {
+        "image/jpeg"
+    } else {
+        "image/png"
+    };
+    Ok(format!("data:{};base64,{}", mime_type, base64_data))
+}
+
+#[tauri::command]
+fn delete_original_backup(filepath: String) -> Result<(), String> {
+    let backup_path = get_original_backup_path(&filepath);
+    if std::path::Path::new(&backup_path).exists() {
+        std::fs::remove_file(&backup_path)
+            .map_err(|e| format!("Failed to delete backup: {}", e))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn save_edited_screenshot(filepath: String, base64_data: String) -> Result<String, String> {
     use base64::Engine;
@@ -522,7 +597,7 @@ fn save_edited_screenshot(filepath: String, base64_data: String) -> Result<Strin
     Ok(filepath)
 }
 
-// Rename popup: 380x140 fixed size
+// Rename popup: 410x215 fixed size
 // Compact dimensions for filename input, note field, and shortcuts bar
 #[tauri::command]
 fn open_rename_popup(app: tauri::AppHandle, filepath: String) -> Result<(), String> {
@@ -533,7 +608,7 @@ fn open_rename_popup(app: tauri::AppHandle, filepath: String) -> Result<(), Stri
     // Create compact popup window for renaming with preview
     WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
         .title("Screenshot")
-        .inner_size(410.0, 141.0)
+        .inner_size(410.0, 215.0)
         .resizable(false)
         .always_on_top(true)
         .center()
@@ -595,6 +670,12 @@ fn close_shortcut_config(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn delete_screenshot(app: tauri::AppHandle, filepath: String) -> Result<(), String> {
+    // Delete the backup if it exists
+    let backup_path = get_original_backup_path(&filepath);
+    if std::path::Path::new(&backup_path).exists() {
+        let _ = std::fs::remove_file(&backup_path);
+    }
+
     // Delete the file
     std::fs::remove_file(&filepath)
         .map_err(|e| format!("Failed to delete: {}", e))?;
@@ -635,7 +716,7 @@ fn calculate_editor_padding(img_width: u32, img_height: u32, was_resized: bool) 
 // Canvas scales within window (see editor.html resizeCanvas)
 // Window size calculated to fit image with toolbar and padding
 #[tauri::command]
-fn open_editor_window(app: tauri::AppHandle, filepath: String, note: Option<String>, state: State<AppState>) -> Result<(), String> {
+fn open_editor_window(app: tauri::AppHandle, filepath: String, note: Option<String>, burned_note: Option<String>, state: State<AppState>) -> Result<(), String> {
     // Close rename popup first
     if let Some(rename_window) = app.get_webview_window("rename") {
         let _ = rename_window.close();
@@ -656,12 +737,14 @@ fn open_editor_window(app: tauri::AppHandle, filepath: String, note: Option<Stri
     let encoded_path = urlencoding::encode(&filepath);
     let note_value = note.unwrap_or_default();
     let encoded_note = urlencoding::encode(&note_value);
-    let url = format!("/editor.html?path={}&padding={}&note={}", encoded_path, padding.round() as i32, encoded_note);
+    let burned_note_value = burned_note.unwrap_or_default();
+    let encoded_burned_note = urlencoding::encode(&burned_note_value);
+    let url = format!("/editor.html?path={}&padding={}&note={}&burnedNote={}", encoded_path, padding.round() as i32, encoded_note, encoded_burned_note);
 
     WebviewWindowBuilder::new(&app, "editor", tauri::WebviewUrl::App(url.into()))
         .title("Edit Screenshot")
         .inner_size(window_w, window_h)
-        .min_inner_size(500.0, 250.0)
+        .min_inner_size(580.0, 250.0)
         .resizable(true)
         .center()
         .build()
@@ -671,7 +754,7 @@ fn open_editor_window(app: tauri::AppHandle, filepath: String, note: Option<Stri
 }
 
 #[tauri::command]
-fn close_editor_and_open_rename(app: tauri::AppHandle, filepath: String, note: Option<String>) -> Result<(), String> {
+fn close_editor_and_open_rename(app: tauri::AppHandle, filepath: String, note: Option<String>, burned_note: Option<String>) -> Result<(), String> {
     // Close editor window first
     if let Some(editor_window) = app.get_webview_window("editor") {
         let _ = editor_window.close();
@@ -681,7 +764,9 @@ fn close_editor_and_open_rename(app: tauri::AppHandle, filepath: String, note: O
     let encoded_path = urlencoding::encode(&filepath);
     let note_value = note.unwrap_or_default();
     let encoded_note = urlencoding::encode(&note_value);
-    let url = format!("/rename.html?path={}&note={}", encoded_path, encoded_note);
+    let burned_note_value = burned_note.unwrap_or_default();
+    let encoded_burned_note = urlencoding::encode(&burned_note_value);
+    let url = format!("/rename.html?path={}&note={}&burnedNote={}", encoded_path, encoded_note, encoded_burned_note);
 
     WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
         .title("Screenshot")
@@ -1122,6 +1207,8 @@ fn update_tray_labels(app: &tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    cleanup_backup_cache();
+    
     let mut initial_settings = load_settings_from_file();
     let mut settings_changed = false;
 
@@ -1277,7 +1364,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
+        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, ensure_original_backup, read_original_image_base64, delete_original_backup, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
         .on_window_event(|window, event| {
             // Only prevent close for main window, let rename popup close normally
             if window.label() == "main" {

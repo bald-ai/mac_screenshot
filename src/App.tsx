@@ -41,22 +41,29 @@ const DEFAULT_FILENAME_TEMPLATE: FilenameTemplate = {
 
 const SIZE_OPTIONS = [
   { label: "Original", value: 0 },
-  { label: "1920px", value: 1920 },
-  { label: "1440px", value: 1440 },
-  { label: "1280px", value: 1280 },
-  { label: "1024px", value: 1024 },
+  { label: "1920 x 1080", value: 1920 },
+  { label: "1440 x 810", value: 1440 },
+  { label: "1280 x 720", value: 1280 },
+  { label: "1024 x 576", value: 1024 },
+  { label: "800 x 450", value: 800 },
+  { label: "640 x 360", value: 640 },
+  { label: "512 x 288", value: 512 },
+  { label: "400 x 225", value: 400 },
+  { label: "320 x 180", value: 320 },
+  { label: "256 x 144", value: 256 },
 ];
 
 function App() {
   const [settings, setSettings] = useState<Settings>({
-    quality: 50,
-    maxWidth: 1280,
+    quality: 70,
+    maxWidth: 1024,
     notePrefixEnabled: false,
     notePrefix: "",
     filenameTemplate: DEFAULT_FILENAME_TEMPLATE,
     fullscreenShortcut: "Cmd+Shift+3",
     areaShortcut: "Cmd+Shift+4",
   });
+  const [lastSavedSettings, setLastSavedSettings] = useState<Settings | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
   const saveStatusTimeoutRef = useRef<number | null>(null);
   const [showFilenameTemplate, setShowFilenameTemplate] = useState(false);
@@ -67,6 +74,7 @@ function App() {
   useEffect(() => {
     invoke<Settings>("get_settings").then((s) => {
       setSettings(s);
+      setLastSavedSettings(s);
     }).catch(console.error);
   }, []);
 
@@ -85,6 +93,7 @@ function App() {
       setSaveStatus("saving");
       await invoke("save_settings", { settings });
       setSaveStatus("saved");
+      setLastSavedSettings(settings);
       if (saveStatusTimeoutRef.current !== null) {
         window.clearTimeout(saveStatusTimeoutRef.current);
       }
@@ -182,6 +191,18 @@ function App() {
     };
   }, []);
 
+  const handleTemplateBack = () => {
+    if (lastSavedSettings) {
+      setSettings(lastSavedSettings);
+    }
+    setSaveStatus("idle");
+    if (saveStatusTimeoutRef.current !== null) {
+      window.clearTimeout(saveStatusTimeoutRef.current);
+      saveStatusTimeoutRef.current = null;
+    }
+    setShowFilenameTemplate(false);
+  };
+
   useEffect(() => {
     const panel = settingsPanelRef.current;
     if (!panel) return;
@@ -210,12 +231,21 @@ function App() {
           <FilenameTemplateEditor
             template={settings.filenameTemplate}
             onTemplateChange={(template) => updateSettings({ ...settings, filenameTemplate: template })}
-            onBack={() => setShowFilenameTemplate(false)}
-            onReset={() => updateSettings({ ...settings, filenameTemplate: DEFAULT_FILENAME_TEMPLATE })}
           />
           <div className="template-footer">
-            <button onClick={() => setShowFilenameTemplate(false)} className="back-btn">◀ Back</button>
-            <button onClick={saveSettings} className="save-btn compact">Save</button>
+            <div className="template-footer-row">
+              <button onClick={saveSettings} className="save-btn compact">Save</button>
+              <button
+                onClick={() => updateSettings({ ...settings, filenameTemplate: DEFAULT_FILENAME_TEMPLATE })}
+                className="reset-btn compact"
+              >
+                Reset
+              </button>
+            </div>
+            <div className="template-footer-row">
+              <button onClick={handleTemplateBack} className="back-btn">◀ Back</button>
+              <button onClick={() => getCurrentWindow().close()} className="exit-btn compact">Quit</button>
+            </div>
           </div>
           <div className={`save-status compact ${saveStatus}`}>
             {saveStatus === "dirty" && "•"}
@@ -244,7 +274,7 @@ function App() {
           />
         </div>
         <div className="settings-row">
-          <label>Max Width:</label>
+          <label>Max Size:</label>
           <select
             value={settings.maxWidth}
             onChange={(e) => updateSettings({ ...settings, maxWidth: parseInt(e.target.value) })}

@@ -116,6 +116,7 @@ button {
   user-select: none;
   -webkit-user-select: none;
   color: var(--text-muted);
+  width: fit-content;
 }
 
 .quality-slider {
@@ -364,7 +365,7 @@ button {
 .filename-template {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .preview-section {
@@ -379,15 +380,17 @@ button {
 }
 
 .preview-filename {
-  padding: 8px 10px;
+  padding: 6px 8px;
   background: rgba(12, 28, 34, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 11px;
   font-family: monospace;
   color: var(--accent-strong);
-  word-break: break-all;
-  line-height: 1.3;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+  min-height: 30px;
 }
 
 .template-header {
@@ -416,25 +419,25 @@ button {
 
 .warning-message {
   flex: 1;
-  padding: 4px 8px;
+  padding: 3px 6px;
   background: rgba(255, 180, 0, 0.15);
   border: 1px solid rgba(255, 180, 0, 0.3);
   border-radius: 4px;
-  font-size: 9px;
+  font-size: 8px;
   color: #ffb400;
 }
 
 .blocks-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .block-row {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 6px;
+  padding: 4px 6px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
 }
@@ -446,14 +449,14 @@ button {
 }
 
 .move-btn {
-  width: 20px;
-  height: 14px;
+  width: 18px;
+  height: 12px;
   padding: 0;
   background: rgba(255, 255, 255, 0.1);
   border: none;
   border-radius: 2px;
   color: rgba(255, 255, 255, 0.6);
-  font-size: 8px;
+  font-size: 7px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -475,7 +478,7 @@ button {
   align-items: center;
   gap: 5px;
   flex: 1;
-  font-size: 12px;
+  font-size: 11px;
   color: rgba(255, 255, 255, 0.85);
   cursor: pointer;
 }
@@ -488,14 +491,14 @@ button {
 }
 
 .lock-icon {
-  font-size: 10px;
+  font-size: 9px;
   margin-left: 2px;
 }
 
 .block-row .prefix-input {
-  width: 90px;
-  padding: 4px 8px;
-  font-size: 12px;
+  width: 80px;
+  padding: 3px 6px;
+  font-size: 11px;
 }
 
 .back-btn {
@@ -514,25 +517,56 @@ button {
 }
 
 .template-view {
-  padding: 10px;
+  padding: 6px;
 }
 
 .template-footer {
   display: flex;
+  flex-direction: column;
   gap: 6px;
   margin-top: 6px;
 }
 
-.template-footer .back-btn {
-  flex: 1;
-  text-align: center;
+.template-footer-row {
+  display: flex;
+  gap: 6px;
 }
 
-.template-footer .save-btn.compact {
+.template-footer-row button {
   flex: 1;
+  height: 30px;
   padding: 6px 10px;
   font-size: 11px;
-  margin-top: 0;
+  font-weight: 500;
+  line-height: 1;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: none;
+}
+
+.template-footer-row .save-btn {
+  background: var(--accent) !important;
+  color: #0b1d14 !important;
+  border: none;
+}
+
+.template-footer-row .save-btn:hover {
+  background: var(--accent-strong) !important;
+}
+
+.template-footer-row .back-btn,
+.template-footer-row .reset-btn,
+.template-footer-row .exit-btn {
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: var(--text) !important;
+}
+
+.template-footer-row .back-btn:hover,
+.template-footer-row .reset-btn:hover,
+.template-footer-row .exit-btn:hover {
+  background: rgba(255, 255, 255, 0.2) !important;
 }
 
 .save-status.compact {
