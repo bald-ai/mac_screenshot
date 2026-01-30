@@ -18,3 +18,9 @@ This file defines the shared rules for AI coding work. Optimize for clarity and 
 13) Coverage bar: Thresholds at 70% for lines/branches/functions/statements.
 14) File size guideline: aim to keep files under ~700 LOC; split/refactor when it improves clarity or testability.
 15) If documentation.md exists, reference it. It will contain important info when you make plans or change code.
+
+## Build Commands
+- To verify Rust code compiles: `cargo check` (in src-tauri/)
+- To verify TypeScript compiles: `npx tsc --noEmit`
+- To run dev build for testing: `npm run tauri dev`
+- **NEVER run `npm run tauri build`** - this creates a full release build with DMG installer and takes forever. Only the user runs release builds.

@@ -27,3 +27,9 @@ Use canonical names here and list the aliases you commonly say out loud. Keep it
 ## Components
 
 ## Data / Concepts
+
+| Canonical Name | Aliases | Code Anchors |
+|----------------|---------|--------------|
+| Stitching | stitch, image stitching, combine screenshots | `src/stitch.ts`, `stitchImages`, `stitch-images` event, `save_stitch_temp` |
+
+**Stitching** - Feature that combines multiple screenshots into a single vertical image. Images are stacked top-to-bottom with 8px gray dividers between them. Narrower images are centered horizontally on a light gray background.

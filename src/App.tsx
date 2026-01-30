@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import FilenameTemplateEditor from "./FilenameTemplate";
 import { formatShortcutForDisplay } from "./shortcutFormat";
+import { MAX_STITCH_IMAGES } from "./constants";
+
 
 interface FilenameBlock {
   id: string;
@@ -25,6 +27,7 @@ interface Settings {
   filenameTemplate: FilenameTemplate;
   fullscreenShortcut: string;
   areaShortcut: string;
+  stitchShortcut: string;
 }
 
 const DEFAULT_FILENAME_TEMPLATE: FilenameTemplate = {
@@ -62,6 +65,7 @@ function App() {
     filenameTemplate: DEFAULT_FILENAME_TEMPLATE,
     fullscreenShortcut: "Cmd+Shift+3",
     areaShortcut: "Cmd+Shift+4",
+    stitchShortcut: "Cmd+Shift+2",
   });
   const [lastSavedSettings, setLastSavedSettings] = useState<Settings | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
@@ -144,9 +148,46 @@ function App() {
       takeFullscreenScreenshot();
     });
 
+    const unlistenStitch = listen("stitch-images", async () => {
+      console.log("[stitch] event received");
+      try {
+        const paths = await invoke<string[]>("get_finder_selection");
+        console.log("[stitch] finder selection count:", paths.length);
+        if (paths.length < 2) {
+          console.warn("[stitch] need at least 2 images");
+          await invoke("clear_stitch_lock");
+          return;
+        }
+        if (paths.length > MAX_STITCH_IMAGES) {
+          throw new Error(`Too many images (max ${MAX_STITCH_IMAGES})`);
+        }
+        
+        const { stitchImages } = await import("./stitch");
+        const stitch = stitchImages;
+        const result = await stitch(paths);
+        console.log("[stitch] stitch result", { width: result.width, height: result.height });
+        
+        const tempPath = await invoke<string>("save_stitch_temp", { 
+          base64Data: result.base64Data,
+          maxSingleImageHeight: result.maxSingleImageHeight
+        });
+        console.log("[stitch] temp saved at", tempPath);
+        
+        await invoke("open_rename_popup", { filepath: tempPath });
+      } catch (e) {
+        console.error("Stitch failed:", e);
+        const errorMessage = typeof e === "string" ? e : e instanceof Error ? e.message : "Stitch failed";
+        if (errorMessage.includes("Too many images")) {
+          await invoke("show_alert", { title: "Stitch Error", message: errorMessage });
+        }
+        await invoke("clear_stitch_lock");
+      }
+    });
+
     return () => {
       unlistenArea.then((fn) => fn());
       unlistenFull.then((fn) => fn());
+      unlistenStitch.then((fn) => fn());
     };
   }, []);
 
@@ -159,14 +200,17 @@ function App() {
 
         if (target === "fullscreen") {
           newSettings.fullscreenShortcut = shortcut;
-        } else {
+        } else if (target === "area") {
           newSettings.areaShortcut = shortcut;
+        } else if (target === "stitch") {
+          newSettings.stitchShortcut = shortcut;
         }
 
         try {
           await invoke("update_shortcuts", {
             fullscreenShortcut: newSettings.fullscreenShortcut,
             areaShortcut: newSettings.areaShortcut,
+            stitchShortcut: newSettings.stitchShortcut,
           });
           setSettings(newSettings);
           setShortcutError(null);
@@ -322,7 +366,7 @@ function App() {
               invoke("open_shortcut_config", {
                 target: "fullscreen",
                 currentShortcut: settings.fullscreenShortcut,
-                otherShortcut: settings.areaShortcut,
+                otherShortcut: settings.areaShortcut + "," + settings.stitchShortcut,
               });
             }}
             onKeyDown={(event) => {
@@ -331,7 +375,7 @@ function App() {
                 invoke("open_shortcut_config", {
                   target: "fullscreen",
                   currentShortcut: settings.fullscreenShortcut,
-                  otherShortcut: settings.areaShortcut,
+                  otherShortcut: settings.areaShortcut + "," + settings.stitchShortcut,
                 });
               }
             }}
@@ -348,7 +392,7 @@ function App() {
               invoke("open_shortcut_config", {
                 target: "area",
                 currentShortcut: settings.areaShortcut,
-                otherShortcut: settings.fullscreenShortcut,
+                otherShortcut: settings.fullscreenShortcut + "," + settings.stitchShortcut,
               });
             }}
             onKeyDown={(event) => {
@@ -357,12 +401,38 @@ function App() {
                 invoke("open_shortcut_config", {
                   target: "area",
                   currentShortcut: settings.areaShortcut,
-                  otherShortcut: settings.fullscreenShortcut,
+                  otherShortcut: settings.fullscreenShortcut + "," + settings.stitchShortcut,
                 });
               }
             }}
           >
             <kbd>{formatShortcutForDisplay(settings.areaShortcut)}</kbd> area
+          </span>
+          {" · "}
+          <span
+            className="shortcut-link"
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setShortcutError(null);
+              invoke("open_shortcut_config", {
+                target: "stitch",
+                currentShortcut: settings.stitchShortcut,
+                otherShortcut: settings.fullscreenShortcut + "," + settings.areaShortcut,
+              });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                setShortcutError(null);
+                invoke("open_shortcut_config", {
+                  target: "stitch",
+                  currentShortcut: settings.stitchShortcut,
+                  otherShortcut: settings.fullscreenShortcut + "," + settings.areaShortcut,
+                });
+              }
+            }}
+          >
+            <kbd>{formatShortcutForDisplay(settings.stitchShortcut)}</kbd> stitch
           </span>
         </div>
         {shortcutError && <div className="shortcut-error">{shortcutError}</div>}

@@ -37,7 +37,7 @@
     const cancelBtn = document.getElementById('cancelBtn');
 
     let recordedShortcut = '';
-    const normalizedOtherShortcut = normalizeShortcutString(otherShortcut) || otherShortcut;
+    const otherShortcuts = otherShortcut.split(',').map(s => normalizeShortcutString(s.trim()) || s.trim()).filter(Boolean);
 
     function setError(message) {
       errorMsg.textContent = message || '';
@@ -106,7 +106,7 @@
       recordedShortcut = shortcut;
       display.textContent = formatShortcutForDisplay(shortcut);
 
-      if (shortcut === normalizedOtherShortcut) {
+      if (otherShortcuts.includes(shortcut)) {
         setError('This shortcut is already used');
         saveBtn.disabled = true;
       } else {

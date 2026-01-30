@@ -56,6 +56,8 @@ pub struct Settings {
     pub fullscreen_shortcut: String,
     #[serde(default = "default_area_shortcut")]
     pub area_shortcut: String,
+    #[serde(default = "default_stitch_shortcut")]
+    pub stitch_shortcut: String,
 }
 
 fn default_fullscreen_shortcut() -> String {
@@ -64,6 +66,10 @@ fn default_fullscreen_shortcut() -> String {
 
 fn default_area_shortcut() -> String {
     "Cmd+Shift+4".to_string()
+}
+
+fn default_stitch_shortcut() -> String {
+    "Cmd+Shift+2".to_string()
 }
 
 impl Default for Settings {
@@ -76,6 +82,7 @@ impl Default for Settings {
             filename_template: FilenameTemplate::default(),
             fullscreen_shortcut: default_fullscreen_shortcut(),
             area_shortcut: default_area_shortcut(),
+            stitch_shortcut: default_stitch_shortcut(),
         }
     }
 }
@@ -84,11 +91,27 @@ pub struct AppState {
     pub settings: Mutex<Settings>,
     pub active_fullscreen_shortcut: Mutex<Shortcut>,
     pub active_area_shortcut: Mutex<Shortcut>,
+    pub active_stitch_shortcut: Mutex<Shortcut>,
+    pub stitch_lock: Mutex<bool>,
 }
 
 fn get_settings_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     std::path::PathBuf::from(home).join(".screenshot_app_settings.json")
+}
+
+fn settings_file_has_stitch_shortcut() -> bool {
+    let path = get_settings_path();
+    if !path.exists() {
+        return true;
+    }
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    value.get("stitchShortcut").is_some()
 }
 
 fn load_settings_from_file() -> Settings {
@@ -130,22 +153,33 @@ async fn update_shortcuts(
     state: State<'_, AppState>,
     fullscreen_shortcut: String,
     area_shortcut: String,
+    stitch_shortcut: String,
 ) -> Result<(), String> {
     let fullscreen_shortcut = normalize_shortcut_string(&fullscreen_shortcut)?;
     let area_shortcut = normalize_shortcut_string(&area_shortcut)?;
+    let stitch_shortcut = normalize_shortcut_string(&stitch_shortcut)?;
     let new_full = parse_shortcut(&fullscreen_shortcut)?;
     let new_area = parse_shortcut(&area_shortcut)?;
-    if new_full.id() == new_area.id() {
-        return Err("Fullscreen and area shortcuts must be different".to_string());
+    let new_stitch = parse_shortcut(&stitch_shortcut)?;
+    if new_full.id() == new_area.id()
+        || new_full.id() == new_stitch.id()
+        || new_area.id() == new_stitch.id()
+    {
+        return Err("Shortcuts must be different".to_string());
     }
 
-    let (old_full_str, old_area_str) = {
+    let (old_full_str, old_area_str, old_stitch_str) = {
         let settings = state.settings.lock().unwrap();
-        (settings.fullscreen_shortcut.clone(), settings.area_shortcut.clone())
+        (
+            settings.fullscreen_shortcut.clone(),
+            settings.area_shortcut.clone(),
+            settings.stitch_shortcut.clone(),
+        )
     };
 
     let old_full = parse_shortcut(&old_full_str).ok();
     let old_area = parse_shortcut(&old_area_str).ok();
+    let old_stitch = parse_shortcut(&old_stitch_str).ok();
 
     let global_shortcut = app.global_shortcut();
 
@@ -155,12 +189,18 @@ async fn update_shortcuts(
     if let Some(ref s) = old_area {
         let _ = global_shortcut.unregister(*s);
     }
+    if let Some(ref s) = old_stitch {
+        let _ = global_shortcut.unregister(*s);
+    }
 
     if let Err(e) = global_shortcut.register(new_full) {
         if let Some(ref s) = old_full {
             let _ = global_shortcut.register(*s);
         }
         if let Some(ref s) = old_area {
+            let _ = global_shortcut.register(*s);
+        }
+        if let Some(ref s) = old_stitch {
             let _ = global_shortcut.register(*s);
         }
         return Err(format!("Failed to register fullscreen shortcut: {}", e));
@@ -174,24 +214,13 @@ async fn update_shortcuts(
         if let Some(ref s) = old_area {
             let _ = global_shortcut.register(*s);
         }
+        if let Some(ref s) = old_stitch {
+            let _ = global_shortcut.register(*s);
+        }
         return Err(format!("Failed to register area shortcut: {}", e));
     }
 
-    let settings_snapshot = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.fullscreen_shortcut = fullscreen_shortcut;
-        settings.area_shortcut = area_shortcut;
-        settings.clone()
-    };
-
-    *state.active_fullscreen_shortcut.lock().unwrap() = new_full;
-    *state.active_area_shortcut.lock().unwrap() = new_area;
-    if let Err(e) = save_settings_to_file(&settings_snapshot) {
-        let mut settings = state.settings.lock().unwrap();
-        settings.fullscreen_shortcut = old_full_str.clone();
-        settings.area_shortcut = old_area_str.clone();
-        drop(settings);
-
+    if let Err(e) = global_shortcut.register(new_stitch) {
         let _ = global_shortcut.unregister(new_full);
         let _ = global_shortcut.unregister(new_area);
         if let Some(ref s) = old_full {
@@ -200,11 +229,50 @@ async fn update_shortcuts(
         if let Some(ref s) = old_area {
             let _ = global_shortcut.register(*s);
         }
+        if let Some(ref s) = old_stitch {
+            let _ = global_shortcut.register(*s);
+        }
+        return Err(format!("Failed to register stitch shortcut: {}", e));
+    }
+
+    let settings_snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.fullscreen_shortcut = fullscreen_shortcut;
+        settings.area_shortcut = area_shortcut;
+        settings.stitch_shortcut = stitch_shortcut;
+        settings.clone()
+    };
+
+    *state.active_fullscreen_shortcut.lock().unwrap() = new_full;
+    *state.active_area_shortcut.lock().unwrap() = new_area;
+    *state.active_stitch_shortcut.lock().unwrap() = new_stitch;
+    if let Err(e) = save_settings_to_file(&settings_snapshot) {
+        let mut settings = state.settings.lock().unwrap();
+        settings.fullscreen_shortcut = old_full_str.clone();
+        settings.area_shortcut = old_area_str.clone();
+        settings.stitch_shortcut = old_stitch_str.clone();
+        drop(settings);
+
+        let _ = global_shortcut.unregister(new_full);
+        let _ = global_shortcut.unregister(new_area);
+        let _ = global_shortcut.unregister(new_stitch);
+        if let Some(ref s) = old_full {
+            let _ = global_shortcut.register(*s);
+        }
+        if let Some(ref s) = old_area {
+            let _ = global_shortcut.register(*s);
+        }
+        if let Some(ref s) = old_stitch {
+            let _ = global_shortcut.register(*s);
+        }
         if let Some(s) = old_full {
             *state.active_fullscreen_shortcut.lock().unwrap() = s;
         }
         if let Some(s) = old_area {
             *state.active_area_shortcut.lock().unwrap() = s;
+        }
+        if let Some(s) = old_stitch {
+            *state.active_stitch_shortcut.lock().unwrap() = s;
         }
 
         return Err(e);
@@ -385,26 +453,21 @@ fn optimize_screenshot(filepath: &str, settings: &Settings) -> Result<String, St
     }
 }
 
-#[tauri::command]
-fn take_screenshot(app: tauri::AppHandle, state: State<AppState>) -> Result<String, String> {
-    // Block if rename popup is open
+fn do_area_screenshot(app: &tauri::AppHandle) -> Result<String, String> {
     if app.get_webview_window("rename").is_some() {
         return Err("Please finish renaming the current screenshot first".to_string());
     }
 
+    let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
     let filepath = generate_temp_screenshot_path("png");
 
-    // Use macOS screencapture command
-    // -i = interactive mode (select area)
-    // -x = no sound
     let output = Command::new("screencapture")
         .args(["-i", "-x", &filepath])
         .output()
         .map_err(|e| format!("Failed to run screencapture: {}", e))?;
 
     if output.status.success() {
-        // Check if file was created (user might have cancelled)
         if std::path::Path::new(&filepath).exists() {
             let optimized_path = optimize_screenshot(&filepath, &settings)?;
             let (width, height) = get_image_dimensions(&optimized_path)?;
@@ -425,17 +488,19 @@ fn take_screenshot(app: tauri::AppHandle, state: State<AppState>) -> Result<Stri
 }
 
 #[tauri::command]
-fn take_fullscreen_screenshot(app: tauri::AppHandle, state: State<AppState>) -> Result<String, String> {
-    // Block if rename popup is open
+fn take_screenshot(app: tauri::AppHandle, _state: State<AppState>) -> Result<String, String> {
+    do_area_screenshot(&app)
+}
+
+fn do_fullscreen_screenshot(app: &tauri::AppHandle) -> Result<String, String> {
     if app.get_webview_window("rename").is_some() {
         return Err("Please finish renaming the current screenshot first".to_string());
     }
 
+    let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
     let filepath = generate_temp_screenshot_path("png");
 
-    // Use macOS screencapture command
-    // -x = no sound (full screen capture, no -i flag)
     let output = Command::new("screencapture")
         .args(["-x", &filepath])
         .output()
@@ -459,6 +524,109 @@ fn take_fullscreen_screenshot(app: tauri::AppHandle, state: State<AppState>) -> 
     } else {
         Err("Screenshot failed".to_string())
     }
+}
+
+#[tauri::command]
+fn take_fullscreen_screenshot(app: tauri::AppHandle, _state: State<AppState>) -> Result<String, String> {
+    do_fullscreen_screenshot(&app)
+}
+
+#[tauri::command]
+fn get_finder_selection() -> Result<Vec<String>, String> {
+    println!("[stitch] get_finder_selection called");
+    let script = r#"
+tell application "Finder"
+    activate
+    delay 0.1
+    set selectedItems to selection
+    if selectedItems is {} then
+        try
+            set selectedItems to selection of Finder window 1
+        end try
+    end if
+    set output to ""
+    repeat with anItem in selectedItems
+        set output to output & (POSIX path of (anItem as alias)) & linefeed
+    end repeat
+end tell
+return output
+"#;
+
+    let output = Command::new("osascript")
+        .args(["-e", script])
+        .output()
+        .map_err(|e| format!("Failed to read Finder selection: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let message = stderr.trim();
+        println!("[stitch] finder selection error: {}", message);
+        if message.is_empty() {
+            return Err("Failed to read Finder selection".to_string());
+        }
+        return Err(message.to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    println!("[stitch] finder selection raw: {}", stdout.trim());
+    let paths = stdout
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .filter(|line| std::path::Path::new(line).is_file())
+        .filter(|line| {
+            let ext = std::path::Path::new(line)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            matches!(ext.as_str(), "png" | "jpg" | "jpeg")
+        })
+        .map(|line| line.to_string())
+        .collect::<Vec<String>>();
+
+    println!("[stitch] finder selection filtered count: {}", paths.len());
+    Ok(paths)
+}
+
+#[tauri::command]
+fn save_stitch_temp(
+    state: State<AppState>,
+    base64_data: String,
+    _max_single_image_height: u32,
+) -> Result<String, String> {
+    use base64::Engine;
+    use std::io::Write;
+
+    println!("[stitch] save_stitch_temp called (bytes: {})", base64_data.len());
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|e| format!("Failed to decode base64: {}", e))?;
+
+    let temp_path = generate_temp_screenshot_path("png");
+    let mut file = std::fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temp stitch file: {}", e))?;
+    file.write_all(&bytes)
+        .map_err(|e| format!("Failed to write temp stitch file: {}", e))?;
+
+    let settings = state.settings.lock().unwrap().clone();
+    let optimized = optimize_screenshot(&temp_path, &settings)?;
+    println!("[stitch] save_stitch_temp optimized path: {}", optimized);
+    Ok(optimized)
+}
+
+#[tauri::command]
+fn clear_stitch_lock(state: State<AppState>) -> Result<(), String> {
+    let mut lock = state.stitch_lock.lock().unwrap();
+    *lock = false;
+    println!("[stitch] stitch lock cleared");
+    Ok(())
+}
+
+#[tauri::command]
+fn show_alert(title: String, message: String) -> Result<(), String> {
+    println!("{}: {}", title, message);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1210,9 +1378,9 @@ pub fn run() {
     cleanup_backup_cache();
     
     let mut initial_settings = load_settings_from_file();
-    let mut settings_changed = false;
+    let mut settings_changed = !settings_file_has_stitch_shortcut();
 
-    let (mut shortcut_full, mut shortcut_area);
+    let (mut shortcut_full, mut shortcut_area, mut shortcut_stitch);
 
     match normalize_and_parse(&initial_settings.fullscreen_shortcut) {
         Ok((normalized, shortcut)) => {
@@ -1260,9 +1428,36 @@ pub fn run() {
         }
     }
 
-    if shortcut_full.id() == shortcut_area.id() {
+    match normalize_and_parse(&initial_settings.stitch_shortcut) {
+        Ok((normalized, shortcut)) => {
+            if normalized != initial_settings.stitch_shortcut {
+                initial_settings.stitch_shortcut = normalized;
+                settings_changed = true;
+            }
+            shortcut_stitch = shortcut;
+        }
+        Err(_) => {
+            initial_settings.stitch_shortcut = default_stitch_shortcut();
+            settings_changed = true;
+            let (normalized, shortcut) = normalize_and_parse(&initial_settings.stitch_shortcut)
+                .unwrap_or_else(|_| {
+                    (
+                        default_stitch_shortcut(),
+                        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit2),
+                    )
+                });
+            initial_settings.stitch_shortcut = normalized;
+            shortcut_stitch = shortcut;
+        }
+    }
+
+    if shortcut_full.id() == shortcut_area.id()
+        || shortcut_full.id() == shortcut_stitch.id()
+        || shortcut_area.id() == shortcut_stitch.id()
+    {
         initial_settings.fullscreen_shortcut = default_fullscreen_shortcut();
         initial_settings.area_shortcut = default_area_shortcut();
+        initial_settings.stitch_shortcut = default_stitch_shortcut();
         settings_changed = true;
 
         let (normalized_full, full) = normalize_and_parse(&initial_settings.fullscreen_shortcut)
@@ -1279,10 +1474,19 @@ pub fn run() {
                     Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit4),
                 )
             });
+        let (normalized_stitch, stitch) = normalize_and_parse(&initial_settings.stitch_shortcut)
+            .unwrap_or_else(|_| {
+                (
+                    default_stitch_shortcut(),
+                    Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Digit2),
+                )
+            });
         initial_settings.fullscreen_shortcut = normalized_full;
         initial_settings.area_shortcut = normalized_area;
+        initial_settings.stitch_shortcut = normalized_stitch;
         shortcut_full = full;
         shortcut_area = area;
+        shortcut_stitch = stitch;
     }
 
     if settings_changed {
@@ -1294,10 +1498,12 @@ pub fn run() {
             settings: Mutex::new(initial_settings),
             active_fullscreen_shortcut: Mutex::new(shortcut_full),
             active_area_shortcut: Mutex::new(shortcut_area),
+            active_stitch_shortcut: Mutex::new(shortcut_stitch),
+            stitch_lock: Mutex::new(false),
         })
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([shortcut_area, shortcut_full])
+                .with_shortcuts([shortcut_area, shortcut_full, shortcut_stitch])
                 .unwrap()
                 .with_handler(move |app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
@@ -1307,13 +1513,41 @@ pub fn run() {
                         let state = app.state::<AppState>();
                         let fullscreen_shortcut = *state.active_fullscreen_shortcut.lock().unwrap();
                         let area_shortcut = *state.active_area_shortcut.lock().unwrap();
+                        let stitch_shortcut = *state.active_stitch_shortcut.lock().unwrap();
 
                         if shortcut.id() == area_shortcut.id() {
-                            // Cmd+Shift+4: Select area screenshot
-                            let _ = app.emit("take-screenshot", ());
+                            let app_clone = app.clone();
+                            std::thread::spawn(move || {
+                                if let Ok(path) = do_area_screenshot(&app_clone) {
+                                    let _ = open_rename_popup(app_clone, path);
+                                }
+                            });
                         } else if shortcut.id() == fullscreen_shortcut.id() {
-                            // Cmd+Shift+3: Full screen screenshot
-                            let _ = app.emit("take-fullscreen-screenshot", ());
+                            let app_clone = app.clone();
+                            std::thread::spawn(move || {
+                                if let Ok(path) = do_fullscreen_screenshot(&app_clone) {
+                                    let _ = open_rename_popup(app_clone, path);
+                                }
+                            });
+                        } else if shortcut.id() == stitch_shortcut.id() {
+                            let mut lock = state.stitch_lock.lock().unwrap();
+                            if *lock {
+                                println!("[stitch] shortcut ignored: lock already set");
+                                return;
+                            }
+                            *lock = true;
+                            println!("[stitch] shortcut accepted: lock set, emitting event");
+                            let app_clone = app.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_secs(10));
+                                let state = app_clone.state::<AppState>();
+                                let mut lock = state.stitch_lock.lock().unwrap();
+                                if *lock {
+                                    *lock = false;
+                                    println!("[stitch] lock auto-cleared after timeout");
+                                }
+                            });
+                            let _ = app.emit("stitch-images", ());
                         }
                     }
                 })
@@ -1330,10 +1564,20 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "screenshot" => {
-                        let _ = app.emit("take-screenshot", ());
+                        let app_clone = app.clone();
+                        std::thread::spawn(move || {
+                            if let Ok(path) = do_area_screenshot(&app_clone) {
+                                let _ = open_rename_popup(app_clone, path);
+                            }
+                        });
                     }
                     "fullscreen" => {
-                        let _ = app.emit("take-fullscreen-screenshot", ());
+                        let app_clone = app.clone();
+                        std::thread::spawn(move || {
+                            if let Ok(path) = do_fullscreen_screenshot(&app_clone) {
+                                let _ = open_rename_popup(app_clone, path);
+                            }
+                        });
                     }
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -1364,7 +1608,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, rename_screenshot, save_edited_screenshot, read_image_base64, ensure_original_backup, read_original_image_base64, delete_original_backup, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
+        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, get_finder_selection, save_stitch_temp, clear_stitch_lock, show_alert, rename_screenshot, save_edited_screenshot, read_image_base64, ensure_original_backup, read_original_image_base64, delete_original_backup, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
         .on_window_event(|window, event| {
             // Only prevent close for main window, let rename popup close normally
             if window.label() == "main" {

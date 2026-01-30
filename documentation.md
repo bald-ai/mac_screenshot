@@ -1,5 +1,19 @@
 # Screenshot Editor Documentation
 
+## Responsibility Boundaries
+
+Core behavior must keep working even if the webview is unresponsive or unmounted.
+
+**Rust (src-tauri) owns:**
+- Global shortcuts, tray menu actions, app lifecycle.
+- Screenshot capture (`screencapture`), file IO, clipboard writes.
+- Any action that must work when the UI is broken or closed.
+
+**Webview / JS owns:**
+- UI rendering, settings panels, and editor interactions.
+- Canvas drawing, annotations, and other visual edits.
+- Calling Rust commands for non-critical actions and updating UI state.
+
 ## UI Layout Constraints
 
 ### Editor Toolbar Minimum Width
@@ -13,3 +27,7 @@ When the screenshot being edited is tall and narrow (portrait orientation), the 
 - `lib.rs`: `MIN_WIDTH = 580.0` in `calculate_editor_window_size`
 
 This ensures the toolbar never becomes too small to display all editing controls fully. The constraint is enforced at the window level by Tauri/the OS, not via CSS.
+
+## Stitching Constraints
+
+Stitching is limited to 8 images per run to avoid oversized outputs and excessive memory use.

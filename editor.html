@@ -125,6 +125,10 @@
       align-items: flex-start;
       justify-content: flex-start;
     }
+    .canvas-container.overflow-vertical {
+      align-items: flex-start;
+      justify-content: center;
+    }
     #editCanvas { cursor: crosshair; }
 
     /* Toast notification */
@@ -502,18 +506,20 @@
     function resizeCanvas() {
       const container = document.querySelector('.canvas-container');
       const maxW = container.clientWidth - editorPadding;
-      const maxH = container.clientHeight - editorPadding;
       let w = originalWidth, h = originalHeight;
+      // Only constrain width, allow height to overflow and scroll
       if (w > maxW) { h = h * (maxW / w); w = maxW; }
-      if (h > maxH) { w = w * (maxH / h); h = maxH; }
       // Apply zoom
       w = Math.floor(w * zoomLevel);
       h = Math.floor(h * zoomLevel);
       canvas.width = w;
       canvas.height = h;
       scaleRatio = canvas.width / originalWidth;
-      // Toggle zoomed class for scroll behavior
-      container.classList.toggle('zoomed', zoomLevel > 1);
+      // Toggle classes for scroll behavior
+      const overflowsVertically = h > container.clientHeight - editorPadding;
+      const overflowsHorizontally = w > container.clientWidth - editorPadding;
+      container.classList.toggle('zoomed', zoomLevel > 1 || (overflowsVertically && overflowsHorizontally));
+      container.classList.toggle('overflow-vertical', overflowsVertically && !overflowsHorizontally && zoomLevel <= 1);
       redrawAll();
       if (history.length === 0) saveState();
     }
@@ -973,7 +979,8 @@
     }
 
     // Create full-resolution canvas with all edits applied and return as Blob
-    function getEditedImageBlob() {
+    // format: 'image/png' for clipboard, 'image/jpeg' for disk save
+    function getEditedImageBlob(format = 'image/png', quality = 0.7) {
       // Create full-resolution canvas
       const saveCanvas = document.createElement('canvas');
       saveCanvas.width = originalWidth;
@@ -993,7 +1000,7 @@
         drawMultilineText(saveCtx, t, 1);
       });
 
-      return new Promise(resolve => saveCanvas.toBlob(resolve, 'image/png'));
+      return new Promise(resolve => saveCanvas.toBlob(resolve, format, quality));
     }
 
     // Copy the edited image to clipboard
@@ -1004,7 +1011,8 @@
       redrawAll();
 
       try {
-        const blob = await getEditedImageBlob();
+        const quality = (settings?.quality ?? 70) / 100;
+        const blob = await getEditedImageBlob('image/jpeg', quality);
         // Convert blob to base64
         const reader = new FileReader();
         const base64 = await new Promise((resolve, reject) => {
@@ -1032,7 +1040,8 @@
       redrawAll();
 
       try {
-        const blob = await getEditedImageBlob();
+        const quality = (settings?.quality ?? 70) / 100;
+        const blob = await getEditedImageBlob('image/jpeg', quality);
         // Convert blob to base64
         const reader = new FileReader();
         const base64 = await new Promise((resolve, reject) => {
@@ -1211,7 +1220,8 @@
           try {
             selectedTextId = null;
             redrawAll();
-            const blob = await getEditedImageBlob();
+            const quality = (settings?.quality ?? 70) / 100;
+            const blob = await getEditedImageBlob('image/jpeg', quality);
             const reader = new FileReader();
             const base64 = await new Promise((resolve, reject) => {
               reader.onload = () => resolve(reader.result.split(',')[1]);
