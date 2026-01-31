@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -93,7 +95,10 @@ pub struct AppState {
     pub active_area_shortcut: Mutex<Shortcut>,
     pub active_stitch_shortcut: Mutex<Shortcut>,
     pub stitch_lock: Mutex<bool>,
+    pub stitched_dimensions: Mutex<HashMap<String, (u32, u32)>>,
 }
+
+static CLIPBOARD_CACHE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn get_settings_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -593,7 +598,8 @@ return output
 fn save_stitch_temp(
     state: State<AppState>,
     base64_data: String,
-    _max_single_image_height: u32,
+    max_single_image_height: u32,
+    max_single_image_width: u32,
 ) -> Result<String, String> {
     use base64::Engine;
     use std::io::Write;
@@ -611,6 +617,10 @@ fn save_stitch_temp(
 
     let settings = state.settings.lock().unwrap().clone();
     let optimized = optimize_screenshot(&temp_path, &settings)?;
+    {
+        let mut stitched_dimensions = state.stitched_dimensions.lock().unwrap();
+        stitched_dimensions.insert(optimized.clone(), (max_single_image_width, max_single_image_height));
+    }
     println!("[stitch] save_stitch_temp optimized path: {}", optimized);
     Ok(optimized)
 }
@@ -630,7 +640,7 @@ fn show_alert(title: String, message: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn rename_screenshot(old_path: String, new_name: String) -> Result<String, String> {
+fn rename_screenshot(old_path: String, new_name: String, state: State<AppState>) -> Result<String, String> {
     use std::path::Path;
 
     let old = Path::new(&old_path);
@@ -651,7 +661,15 @@ fn rename_screenshot(old_path: String, new_name: String) -> Result<String, Strin
     std::fs::rename(&old_path, &new_path)
         .map_err(|e| format!("Failed to rename: {}", e))?;
 
-    Ok(new_path.to_string_lossy().to_string())
+    let new_path_str = new_path.to_string_lossy().to_string();
+    {
+        let mut stitched_dimensions = state.stitched_dimensions.lock().unwrap();
+        if let Some(dimensions) = stitched_dimensions.remove(&old_path) {
+            stitched_dimensions.insert(new_path_str.clone(), dimensions);
+        }
+    }
+
+    Ok(new_path_str)
 }
 
 #[tauri::command]
@@ -838,6 +856,12 @@ fn close_shortcut_config(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn delete_screenshot(app: tauri::AppHandle, filepath: String) -> Result<(), String> {
+    {
+        let state = app.state::<AppState>();
+        let mut stitched_dimensions = state.stitched_dimensions.lock().unwrap();
+        stitched_dimensions.remove(&filepath);
+    }
+
     // Delete the backup if it exists
     let backup_path = get_original_backup_path(&filepath);
     if std::path::Path::new(&backup_path).exists() {
@@ -892,15 +916,20 @@ fn open_editor_window(app: tauri::AppHandle, filepath: String, note: Option<Stri
 
     // Get image dimensions and calculate appropriate window size
     let (img_width, img_height) = get_image_dimensions(&filepath).unwrap_or((800, 600));
+    let reference_dimensions = {
+        let stitched_dimensions = state.stitched_dimensions.lock().unwrap();
+        stitched_dimensions.get(&filepath).copied()
+    };
+    let (reference_width, reference_height) = reference_dimensions.unwrap_or((img_width, img_height));
     
     // Check if image was resized down by optimize_screenshot
     // If width matches max_width setting, it was originally larger (fullscreen/large capture)
     let settings = state.settings.lock().unwrap();
-    let was_resized = settings.max_width > 0 && img_width == settings.max_width;
+    let was_resized = settings.max_width > 0 && reference_width == settings.max_width;
     drop(settings);
     
-    let padding = calculate_editor_padding(img_width, img_height, was_resized);
-    let (window_w, window_h) = calculate_editor_window_size(img_width, img_height, padding);
+    let padding = calculate_editor_padding(reference_width, reference_height, was_resized);
+    let (window_w, window_h) = calculate_editor_window_size(reference_width, reference_height, padding);
 
     let encoded_path = urlencoding::encode(&filepath);
     let note_value = note.unwrap_or_default();
@@ -958,150 +987,125 @@ fn close_editor_window(app: tauri::AppHandle) {
     }
 }
 
+fn get_clipboard_cache_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(home)
+        .join("Library")
+        .join("Caches")
+        .join("screenshotapp")
+        .join("clipboard")
+}
+
+fn generate_clipboard_cache_path(extension: &str) -> Result<String, String> {
+    let sanitized_extension = extension.trim_start_matches('.');
+    if sanitized_extension.is_empty() {
+        return Err("Missing clipboard cache file extension".to_string());
+    }
+
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Failed to read system time: {}", e))?
+        .as_millis();
+    let counter = CLIPBOARD_CACHE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let filename = format!("clipboard-{}-{}.{}", millis, counter, sanitized_extension);
+
+    Ok(get_clipboard_cache_dir()
+        .join(filename)
+        .to_string_lossy()
+        .to_string())
+}
+
+fn write_clipboard_cache_file(bytes: &[u8], extension: &str) -> Result<String, String> {
+    let cache_dir = get_clipboard_cache_dir();
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Failed to create clipboard cache dir: {}", e))?;
+
+    let cached_path = generate_clipboard_cache_path(extension)?;
+    std::fs::write(&cached_path, bytes)
+        .map_err(|e| format!("Failed to write clipboard cache file: {}", e))?;
+
+    Ok(cached_path)
+}
+
+fn cleanup_clipboard_cache() {
+    let cache_dir = get_clipboard_cache_dir();
+    if cache_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_file_url_to_clipboard(filepath: &str) -> Result<(), String> {
+    use objc2::rc::{autoreleasepool, Retained};
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardWriting};
+    use objc2_foundation::{NSArray, NSString, NSURL};
+
+    autoreleasepool(|_| {
+        let path = NSString::from_str(filepath);
+        let url = unsafe { NSURL::fileURLWithPath(&path) };
+        let url_object: Retained<ProtocolObject<dyn NSPasteboardWriting>> =
+            ProtocolObject::from_retained(url);
+        let objects = NSArray::from_vec(vec![url_object]);
+
+        let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
+        unsafe {
+            pasteboard.clearContents();
+        }
+
+        let success = unsafe { pasteboard.writeObjects(&objects) };
+        if success {
+            Ok(())
+        } else {
+            Err("Failed to write file URL to clipboard".to_string())
+        }
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn write_file_url_to_clipboard(_filepath: &str) -> Result<(), String> {
+    Err("File URL clipboard copy is only supported on macOS".to_string())
+}
+
 #[tauri::command]
 fn copy_image_to_clipboard(base64_data: String) -> Result<(), String> {
-    use arboard::{Clipboard, ImageData};
     use base64::Engine;
 
-    // Decode base64 to PNG bytes
-    let png_bytes = base64::engine::general_purpose::STANDARD
+    let image_bytes = base64::engine::general_purpose::STANDARD
         .decode(&base64_data)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
 
-    // Decode PNG to raw RGBA pixels
-    let decoder = png::Decoder::new(std::io::Cursor::new(&png_bytes));
-    let mut reader = decoder.read_info().map_err(|e| format!("Failed to read PNG info: {}", e))?;
-    
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).map_err(|e| format!("Failed to decode PNG frame: {}", e))?;
-    
-    // Ensure we have RGBA data
-    let rgba_data = match info.color_type {
-        png::ColorType::Rgba => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgb => {
-            // Convert RGB to RGBA
-            let rgb = &buf[..info.buffer_size()];
-            let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
-            for chunk in rgb.chunks(3) {
-                rgba.extend_from_slice(chunk);
-                rgba.push(255); // Alpha
-            }
-            rgba
-        }
-        _ => return Err(format!("Unsupported color type: {:?}", info.color_type)),
-    };
-
-    let img_data = ImageData {
-        width: info.width as usize,
-        height: info.height as usize,
-        bytes: rgba_data.into(),
-    };
-
-    let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {}", e))?;
-    clipboard
-        .set_image(img_data)
-        .map_err(|e| format!("Failed to copy image to clipboard: {}", e))?;
+    let cached_path = write_clipboard_cache_file(&image_bytes, "jpg")?;
+    write_file_url_to_clipboard(&cached_path)?;
 
     Ok(())
 }
 
 #[tauri::command]
 fn copy_file_to_clipboard(filepath: String) -> Result<(), String> {
-    use arboard::{Clipboard, ImageData};
-    use std::fs::File;
-    use std::io::BufReader;
-    
-    let file = File::open(&filepath)
-        .map_err(|e| format!("Failed to open file: {}", e))?;
-    let reader = BufReader::new(file);
-    
-    // Detect format by extension
-    let is_jpeg = filepath.to_lowercase().ends_with(".jpg") 
-        || filepath.to_lowercase().ends_with(".jpeg");
-    
-    let (width, height, rgba_data) = if is_jpeg {
-        // Decode JPEG
-        let mut decoder = jpeg_decoder::Decoder::new(reader);
-        let pixels = decoder.decode()
-            .map_err(|e| format!("Failed to decode JPEG: {}", e))?;
-        let info = decoder.info().ok_or("Failed to get JPEG info")?;
-        
-        // Convert to RGBA
-        let rgba = match info.pixel_format {
-            jpeg_decoder::PixelFormat::RGB24 => {
-                let mut rgba = Vec::with_capacity(pixels.len() / 3 * 4);
-                for chunk in pixels.chunks(3) {
-                    rgba.extend_from_slice(chunk);
-                    rgba.push(255);
-                }
-                rgba
-            }
-            jpeg_decoder::PixelFormat::L8 => {
-                let mut rgba = Vec::with_capacity(pixels.len() * 4);
-                for &gray in &pixels {
-                    rgba.extend_from_slice(&[gray, gray, gray, 255]);
-                }
-                rgba
-            }
-            _ => return Err("Unsupported JPEG pixel format".to_string()),
-        };
-        
-        (info.width as usize, info.height as usize, rgba)
-    } else {
-        // Decode PNG
-        let decoder = png::Decoder::new(reader);
-        let mut reader = decoder.read_info()
-            .map_err(|e| format!("Failed to read PNG info: {}", e))?;
-        
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf)
-            .map_err(|e| format!("Failed to decode PNG frame: {}", e))?;
-        
-        let rgba = match info.color_type {
-            png::ColorType::Rgba => buf[..info.buffer_size()].to_vec(),
-            png::ColorType::Rgb => {
-                let rgb = &buf[..info.buffer_size()];
-                let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
-                for chunk in rgb.chunks(3) {
-                    rgba.extend_from_slice(chunk);
-                    rgba.push(255);
-                }
-                rgba
-            }
-            png::ColorType::Grayscale => {
-                let gray = &buf[..info.buffer_size()];
-                let mut rgba = Vec::with_capacity(gray.len() * 4);
-                for &g in gray {
-                    rgba.extend_from_slice(&[g, g, g, 255]);
-                }
-                rgba
-            }
-            png::ColorType::GrayscaleAlpha => {
-                let ga = &buf[..info.buffer_size()];
-                let mut rgba = Vec::with_capacity(ga.len() * 2);
-                for chunk in ga.chunks(2) {
-                    rgba.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
-                }
-                rgba
-            }
-            _ => return Err(format!("Unsupported PNG color type: {:?}", info.color_type)),
-        };
-        
-        (info.width as usize, info.height as usize, rgba)
-    };
-    
-    let img_data = ImageData {
-        width,
-        height,
-        bytes: rgba_data.into(),
-    };
-    
-    let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {}", e))?;
-    clipboard
-        .set_image(img_data)
-        .map_err(|e| format!("Failed to copy image to clipboard: {}", e))?;
-    
-    Ok(())
+    write_file_url_to_clipboard(&filepath)
+}
+
+#[tauri::command]
+fn copy_file_to_clipboard_cached(filepath: String) -> Result<(), String> {
+    let extension = std::path::Path::new(&filepath)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .ok_or("Failed to determine file extension for clipboard cache".to_string())?;
+
+    let cache_dir = get_clipboard_cache_dir();
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Failed to create clipboard cache dir: {}", e))?;
+
+    let cached_path = generate_clipboard_cache_path(extension)?;
+    std::fs::copy(&filepath, &cached_path)
+        .map_err(|e| format!("Failed to cache file for clipboard: {}", e))?;
+
+    write_file_url_to_clipboard(&cached_path)
 }
 
 #[derive(Clone, Copy)]
@@ -1341,11 +1345,19 @@ fn build_tray_menu<R: tauri::Runtime>(
 ) -> tauri::Result<Menu<R>> {
     let full_display = shortcut_to_display(&settings.fullscreen_shortcut);
     let area_display = shortcut_to_display(&settings.area_shortcut);
+    let stitch_display = shortcut_to_display(&settings.stitch_shortcut);
 
     let screenshot_i = MenuItem::with_id(
         app,
         "screenshot",
         format!("Screenshot Area ({})", area_display),
+        true,
+        None::<&str>,
+    )?;
+    let stitch_i = MenuItem::with_id(
+        app,
+        "stitch",
+        format!("Stitch Images ({})", stitch_display),
         true,
         None::<&str>,
     )?;
@@ -1359,7 +1371,7 @@ fn build_tray_menu<R: tauri::Runtime>(
     let show_i = MenuItem::with_id(app, "show", "Show App", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-    Menu::with_items(app, &[&fullscreen_i, &screenshot_i, &show_i, &quit_i])
+    Menu::with_items(app, &[&fullscreen_i, &screenshot_i, &stitch_i, &show_i, &quit_i])
 }
 
 fn update_tray_labels(app: &tauri::AppHandle) -> Result<(), String> {
@@ -1376,6 +1388,7 @@ fn update_tray_labels(app: &tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     cleanup_backup_cache();
+    cleanup_clipboard_cache();
     
     let mut initial_settings = load_settings_from_file();
     let mut settings_changed = !settings_file_has_stitch_shortcut();
@@ -1500,6 +1513,7 @@ pub fn run() {
             active_area_shortcut: Mutex::new(shortcut_area),
             active_stitch_shortcut: Mutex::new(shortcut_stitch),
             stitch_lock: Mutex::new(false),
+            stitched_dimensions: Mutex::new(HashMap::new()),
         })
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -1579,6 +1593,24 @@ pub fn run() {
                             }
                         });
                     }
+                    "stitch" => {
+                        let state = app.state::<AppState>();
+                        let mut lock = state.stitch_lock.lock().unwrap();
+                        if *lock {
+                            return;
+                        }
+                        *lock = true;
+                        let app_clone = app.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_secs(10));
+                            let state = app_clone.state::<AppState>();
+                            let mut lock = state.stitch_lock.lock().unwrap();
+                            if *lock {
+                                *lock = false;
+                            }
+                        });
+                        let _ = app.emit("stitch-images", ());
+                    }
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
@@ -1608,7 +1640,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, get_finder_selection, save_stitch_temp, clear_stitch_lock, show_alert, rename_screenshot, save_edited_screenshot, read_image_base64, ensure_original_backup, read_original_image_base64, delete_original_backup, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
+        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, get_finder_selection, save_stitch_temp, clear_stitch_lock, show_alert, rename_screenshot, save_edited_screenshot, read_image_base64, ensure_original_backup, read_original_image_base64, delete_original_backup, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, copy_file_to_clipboard_cached, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
         .on_window_event(|window, event| {
             // Only prevent close for main window, let rename popup close normally
             if window.label() == "main" {

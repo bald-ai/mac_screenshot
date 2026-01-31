@@ -8,6 +8,7 @@ export interface StitchResult {
   base64Data: string;
   width: number;
   height: number;
+  maxSingleImageWidth: number;
   maxSingleImageHeight: number;
 }
 
@@ -22,6 +23,7 @@ export async function stitchImages(imagePaths: string[]): Promise<StitchResult> 
   );
 
   const maxWidth = Math.max(...images.map((img) => img.width));
+  const maxSingleImageWidth = maxWidth;
   const maxSingleImageHeight = Math.max(...images.map((img) => img.height));
   const totalHeight =
     images.reduce((sum, img) => sum + img.height, 0) +
@@ -65,6 +67,7 @@ export async function stitchImages(imagePaths: string[]): Promise<StitchResult> 
     base64Data,
     width: maxWidth,
     height: totalHeight,
+    maxSingleImageWidth,
     maxSingleImageHeight,
   };
 }

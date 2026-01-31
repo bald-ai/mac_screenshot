@@ -250,7 +250,7 @@
       }
       
       try {
-        await invoke('copy_file_to_clipboard', { filepath });
+        await invoke('copy_file_to_clipboard_cached', { filepath });
       } catch (e) {
         console.error('Failed to copy to clipboard:', e);
       }

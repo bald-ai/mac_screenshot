@@ -31,3 +31,7 @@ This ensures the toolbar never becomes too small to display all editing controls
 ## Stitching Constraints
 
 Stitching is limited to 8 images per run to avoid oversized outputs and excessive memory use.
+
+Stitching can be triggered from the tray menu via “Stitch Images”.
+
+When editing a stitched image, the editor window width is based on the largest source image so the stitched view matches the single-screenshot width.

@@ -169,7 +169,8 @@ function App() {
         
         const tempPath = await invoke<string>("save_stitch_temp", { 
           base64Data: result.base64Data,
-          maxSingleImageHeight: result.maxSingleImageHeight
+          maxSingleImageHeight: result.maxSingleImageHeight,
+          maxSingleImageWidth: result.maxSingleImageWidth
         });
         console.log("[stitch] temp saved at", tempPath);
         
