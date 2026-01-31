@@ -11,7 +11,6 @@
     <div class="rename-frame" data-tauri-drag-region>
     <div class="group">
       <input type="text" id="nameInput" class="name-input" placeholder="name" autofocus />
-      <input type="text" id="noteInput" class="note-input" placeholder="Annotate image with text." />
       <div class="tooltip">
         <div class="tooltip-row">
           <span>↵ save</span>
@@ -23,11 +22,10 @@
         <div class="tooltip-row">
           <span>esc delete</span>
           <span class="sep">·</span>
-          <span>tab save+edit</span>
+          <span>tab note</span>
         </div>
       </div>
     </div>
-    <canvas id="noteCanvas" style="display:none;"></canvas>
     </div>
   </div>
 
@@ -41,17 +39,8 @@
     const initialFilename = filepath.split('/').pop()?.replace(/\.[^.]+$/, '') || 'screenshot';
 
     const input = document.getElementById('nameInput');
-    const noteInput = document.getElementById('noteInput');
-    const canvas = document.getElementById('noteCanvas');
-    const ctx = canvas.getContext('2d');
 
-    // Load settings for quality and prefix
-    let settings = { quality: 70, maxWidth: 1024, notePrefixEnabled: false, notePrefix: '' };
-    invoke('get_settings').then(s => { settings = s; }).catch(console.error);
-
-    // Pre-populate rename input and note
     input.value = initialFilename;
-    noteInput.value = initialNote;
     input.select();
 
     // Block macOS forbidden filename characters (/ and :)
@@ -64,121 +53,6 @@
         input.selectionStart = input.selectionEnd = Math.max(0, cursorPos - 1);
       }
     });
-
-    // Load image and burn note into it (with adaptive scaling for different screenshot sizes)
-    async function burnNoteIntoImage(note) {
-      // Prepend prefix if enabled
-      const finalNote = (settings.notePrefixEnabled && settings.notePrefix) 
-        ? settings.notePrefix + note 
-        : note;
-      // Read from original backup if it exists, otherwise from main file
-      const base64 = await invoke('read_original_image_base64', { filepath });
-      const wrapText = (text, maxWidth, context) => {
-        if (!text) return [''];
-
-        const words = text.split(/\s+/).filter(Boolean);
-        if (words.length === 0) return [''];
-
-        const lines = [];
-        let currentLine = '';
-
-        const splitLongWord = (word) => {
-          let segment = '';
-          for (const char of word) {
-            const testSegment = segment + char;
-            if (context.measureText(testSegment).width <= maxWidth) {
-              segment = testSegment;
-            } else {
-              if (segment) lines.push(segment);
-              segment = char;
-            }
-          }
-          return segment;
-        };
-
-        words.forEach((word) => {
-          const nextLine = currentLine ? `${currentLine} ${word}` : word;
-          if (context.measureText(nextLine).width <= maxWidth) {
-            currentLine = nextLine;
-            return;
-          }
-
-          if (currentLine) {
-            lines.push(currentLine);
-            currentLine = '';
-          }
-
-          if (context.measureText(word).width <= maxWidth) {
-            currentLine = word;
-          } else {
-            currentLine = splitLongWord(word);
-          }
-        });
-
-        if (currentLine) lines.push(currentLine);
-
-        return lines.length ? lines : [''];
-      };
-
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          const MIN_NOTE_WIDTH = 400;
-          const MAX_CHAR_LIMIT = 1000;
-          const FONT_SIZE = Math.max(12, Math.min(20, img.width * 0.02));
-          const PADDING = Math.max(8, Math.min(16, img.width * 0.015));
-          const LINE_HEIGHT = 1.4;
-
-          let displayNote = finalNote;
-          if (displayNote.length > MAX_CHAR_LIMIT) {
-            displayNote = displayNote.slice(0, MAX_CHAR_LIMIT);
-          }
-
-          const effectiveWidth = Math.max(img.width, MIN_NOTE_WIDTH);
-          const availableTextWidth = effectiveWidth - PADDING * 2;
-
-          ctx.font = `${FONT_SIZE}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-          const lines = wrapText(displayNote, availableTextWidth, ctx);
-          const lineHeight = FONT_SIZE * LINE_HEIGHT;
-          const noteBarHeight = Math.ceil(lines.length * lineHeight + PADDING * 2);
-
-          // Extend canvas to fit image + note bar
-          canvas.width = effectiveWidth;
-          canvas.height = img.height + noteBarHeight;
-
-          const xOffset = (canvas.width - img.width) / 2;
-          if (xOffset > 0) {
-            ctx.fillStyle = '#f2f2f2';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-          }
-
-          // Draw original image centered
-          ctx.drawImage(img, xOffset, 0, img.width, img.height);
-
-          // Draw white bar at bottom
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, img.height, canvas.width, noteBarHeight);
-
-          // Draw black text
-          ctx.fillStyle = '#000000';
-          ctx.font = `${FONT_SIZE}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-          ctx.textBaseline = 'top';
-
-          lines.forEach((line, index) => {
-            const y = img.height + PADDING + index * lineHeight;
-            ctx.fillText(line, PADDING, y);
-          });
-          
-          // Always export as JPEG using configured quality from settings
-          const quality = settings.quality / 100;
-          const dataUrl = canvas.toDataURL('image/jpeg', quality);
-          const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
-          resolve(base64Data);
-        };
-        img.onerror = reject;
-        img.src = base64;
-      });
-    }
 
     async function saveRenameIfNeeded() {
       const newName = input.value.trim() || initialFilename;
@@ -194,33 +68,15 @@
       return filepath;
     }
 
-    // === ACTIONS ===
     async function doSave(copyToClipboard = false) {
-      // First rename if needed
       filepath = await saveRenameIfNeeded();
       
-      const note = noteInput.value.trim();
-      
-      // Only re-burn note if it changed from what's already in the image
-      if (note !== burnedNote) {
-        if (note) {
-          try {
-            const annotatedBase64 = await burnNoteIntoImage(note);
-            await invoke('save_edited_screenshot', { filepath, base64Data: annotatedBase64 });
-          } catch (e) {
-            console.error('Failed to add note:', e);
-          }
-        }
-      }
-      
-      // Cleanup the backup on final save
       try {
         await invoke('delete_original_backup', { filepath });
       } catch (e) {
         console.error('Failed to delete backup:', e);
       }
       
-      // Copy to clipboard if requested
       if (copyToClipboard) {
         try {
           await invoke('copy_file_to_clipboard', { filepath });
@@ -239,16 +95,6 @@
     async function doCopyAndDelete() {
       filepath = await saveRenameIfNeeded();
       
-      const note = noteInput.value.trim();
-      if (note && note !== burnedNote) {
-        try {
-          const annotatedBase64 = await burnNoteIntoImage(note);
-          await invoke('save_edited_screenshot', { filepath, base64Data: annotatedBase64 });
-        } catch (e) {
-          console.error('Failed to add note:', e);
-        }
-      }
-      
       try {
         await invoke('copy_file_to_clipboard_cached', { filepath });
       } catch (e) {
@@ -258,40 +104,25 @@
       await invoke('delete_screenshot', { filepath });
     }
 
-    async function openEditor() {
-      // Save typed name first
+    async function openNotePopup() {
       filepath = await saveRenameIfNeeded();
-      
-      // Pass the note to the editor so it can be passed back when returning
-      const note = noteInput.value.trim();
-      await invoke('open_editor_window', { filepath, note, burned_note: burnedNote });
+      await invoke('open_note_popup', { filepath, note: initialNote, burned_note: burnedNote });
     }
 
-    // Global keyboard shortcuts - work when window is focused
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && e.metaKey) { 
-        // Cmd+Enter: copy + save + close
         e.preventDefault(); 
         doSave(true); 
       }
       else if (e.key === 'Backspace' && e.metaKey) {
-        // Cmd+Backspace: copy + delete
         e.preventDefault();
         doCopyAndDelete();
       }
       else if (e.key === 'Enter') { e.preventDefault(); doSave(); }
       else if (e.key === 'Escape') { e.preventDefault(); doDelete(); }
       else if (e.key === 'Tab' && !e.shiftKey) { 
-        // Only handle Tab for editor if not in note field
-        if (document.activeElement === input) {
-          // Move focus to note input
-          e.preventDefault();
-          noteInput.focus();
-        } else if (document.activeElement === noteInput) {
-          // From note field, Tab opens editor
-          e.preventDefault();
-          openEditor();
-        }
+        e.preventDefault();
+        openNotePopup();
       }
     });
   </script>

@@ -1229,7 +1229,7 @@
               reader.readAsDataURL(blob);
             });
             await invoke('save_edited_screenshot', { filepath, base64Data: base64 });
-            await invoke('close_editor_and_open_rename', { filepath, note: pendingNote, burned_note: pendingNote });
+            await invoke('close_editor_and_open_note', { filepath, note: pendingNote, burned_note: pendingNote });
           } catch (err) {
             console.error('Failed to save and close editor:', err);
           }

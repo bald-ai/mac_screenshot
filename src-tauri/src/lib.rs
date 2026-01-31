@@ -815,6 +815,67 @@ fn close_rename_popup(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+fn open_note_popup(app: tauri::AppHandle, filepath: String, note: Option<String>, burned_note: Option<String>) -> Result<(), String> {
+    if let Some(rename_window) = app.get_webview_window("rename") {
+        let _ = rename_window.close();
+    }
+
+    let encoded_path = urlencoding::encode(&filepath);
+    let note_value = note.unwrap_or_default();
+    let encoded_note = urlencoding::encode(&note_value);
+    let burned_note_value = burned_note.unwrap_or_default();
+    let encoded_burned_note = urlencoding::encode(&burned_note_value);
+    let url = format!("/note.html?path={}&note={}&burnedNote={}", encoded_path, encoded_note, encoded_burned_note);
+
+    WebviewWindowBuilder::new(&app, "note", tauri::WebviewUrl::App(url.into()))
+        .title("Note")
+        .inner_size(410.0, 120.0)
+        .resizable(false)
+        .always_on_top(true)
+        .center()
+        .focused(true)
+        .build()
+        .map_err(|e| format!("Failed to open note window: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn close_note_popup(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("note") {
+        let _ = window.close();
+    }
+}
+
+#[tauri::command]
+fn close_note_and_open_rename(app: tauri::AppHandle, filepath: String, note: Option<String>, burned_note: Option<String>) -> Result<(), String> {
+    if let Some(note_window) = app.get_webview_window("note") {
+        let _ = note_window.close();
+    }
+
+    let encoded_path = urlencoding::encode(&filepath);
+    let note_value = note.unwrap_or_default();
+    let encoded_note = urlencoding::encode(&note_value);
+    let burned_note_value = burned_note.unwrap_or_default();
+    let encoded_burned_note = urlencoding::encode(&burned_note_value);
+    let url = format!("/rename.html?path={}&note={}&burnedNote={}", encoded_path, encoded_note, encoded_burned_note);
+
+    WebviewWindowBuilder::new(&app, "rename", tauri::WebviewUrl::App(url.into()))
+        .title("Screenshot")
+        .inner_size(410.0, 141.0)
+        .resizable(false)
+        .always_on_top(true)
+        .center()
+        .focused(true)
+        .decorations(false)
+        .transparent(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn open_shortcut_config(
     app: tauri::AppHandle,
     target: String,
@@ -872,12 +933,14 @@ fn delete_screenshot(app: tauri::AppHandle, filepath: String) -> Result<(), Stri
     std::fs::remove_file(&filepath)
         .map_err(|e| format!("Failed to delete: {}", e))?;
 
-    // Close the rename popup
     if let Some(window) = app.get_webview_window("rename") {
         let _ = window.close();
     }
 
-    // Close the editor window
+    if let Some(window) = app.get_webview_window("note") {
+        let _ = window.close();
+    }
+
     if let Some(window) = app.get_webview_window("editor") {
         let _ = window.close();
     }
@@ -909,9 +972,11 @@ fn calculate_editor_padding(img_width: u32, img_height: u32, was_resized: bool) 
 // Window size calculated to fit image with toolbar and padding
 #[tauri::command]
 fn open_editor_window(app: tauri::AppHandle, filepath: String, note: Option<String>, burned_note: Option<String>, state: State<AppState>) -> Result<(), String> {
-    // Close rename popup first
     if let Some(rename_window) = app.get_webview_window("rename") {
         let _ = rename_window.close();
+    }
+    if let Some(note_window) = app.get_webview_window("note") {
+        let _ = note_window.close();
     }
 
     // Get image dimensions and calculate appropriate window size
@@ -985,6 +1050,32 @@ fn close_editor_window(app: tauri::AppHandle) {
     if let Some(editor_window) = app.get_webview_window("editor") {
         let _ = editor_window.close();
     }
+}
+
+#[tauri::command]
+fn close_editor_and_open_note(app: tauri::AppHandle, filepath: String, note: Option<String>, burned_note: Option<String>) -> Result<(), String> {
+    if let Some(editor_window) = app.get_webview_window("editor") {
+        let _ = editor_window.close();
+    }
+
+    let encoded_path = urlencoding::encode(&filepath);
+    let note_value = note.unwrap_or_default();
+    let encoded_note = urlencoding::encode(&note_value);
+    let burned_note_value = burned_note.unwrap_or_default();
+    let encoded_burned_note = urlencoding::encode(&burned_note_value);
+    let url = format!("/note.html?path={}&note={}&burnedNote={}", encoded_path, encoded_note, encoded_burned_note);
+
+    WebviewWindowBuilder::new(&app, "note", tauri::WebviewUrl::App(url.into()))
+        .title("Note")
+        .inner_size(410.0, 120.0)
+        .resizable(false)
+        .always_on_top(true)
+        .center()
+        .focused(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 fn get_clipboard_cache_dir() -> std::path::PathBuf {
@@ -1640,7 +1731,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, get_finder_selection, save_stitch_temp, clear_stitch_lock, show_alert, rename_screenshot, save_edited_screenshot, read_image_base64, ensure_original_backup, read_original_image_base64, delete_original_backup, open_rename_popup, close_rename_popup, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, copy_file_to_clipboard_cached, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
+        .invoke_handler(tauri::generate_handler![take_screenshot, take_fullscreen_screenshot, get_finder_selection, save_stitch_temp, clear_stitch_lock, show_alert, rename_screenshot, save_edited_screenshot, read_image_base64, ensure_original_backup, read_original_image_base64, delete_original_backup, open_rename_popup, close_rename_popup, open_note_popup, close_note_popup, close_note_and_open_rename, delete_screenshot, open_editor_window, close_editor_and_open_rename, close_editor_and_open_note, close_editor_window, copy_image_to_clipboard, copy_file_to_clipboard, copy_file_to_clipboard_cached, get_settings, save_settings, update_shortcuts, open_shortcut_config, close_shortcut_config])
         .on_window_event(|window, event| {
             // Only prevent close for main window, let rename popup close normally
             if window.label() == "main" {

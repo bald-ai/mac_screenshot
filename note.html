@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Note</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #2b4f74 0%, #1f6b6f 48%, #6b6862 100%);
+      color: #f6fbf9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .note-container {
+      width: 100%;
+      padding: 16px;
+    }
+    .note-input {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 6px;
+      background: rgba(16, 36, 42, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #f6fbf9;
+      font-size: 16px;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+      outline: none;
+    }
+    .note-input:focus {
+      border-color: #34c759;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 3px rgba(52, 199, 89, 0.2);
+    }
+    .note-input::placeholder {
+      color: rgba(230, 245, 240, 0.45);
+      font-style: italic;
+    }
+    .tooltip {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 10px;
+      gap: 3px;
+      font-size: 9.5px;
+    }
+    .tooltip-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .tooltip span:not(.sep) {
+      color: #f6fbf9;
+      background: rgba(16, 36, 42, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      padding: 2px 7px;
+    }
+    .tooltip .sep {
+      color: rgba(255, 255, 255, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <div class="note-container">
+    <input type="text" id="noteInput" class="note-input" placeholder="Annotate image with text." autofocus />
+    <div class="tooltip">
+      <div class="tooltip-row">
+        <span>↵ save</span>
+        <span class="sep">·</span>
+        <span>⌘↵ copy+save</span>
+        <span class="sep">·</span>
+        <span>⌘⌫ copy+del</span>
+      </div>
+      <div class="tooltip-row">
+        <span>esc delete</span>
+        <span class="sep">·</span>
+        <span>⇧tab rename</span>
+        <span class="sep">·</span>
+        <span>tab edit</span>
+      </div>
+    </div>
+  </div>
+  <canvas id="noteCanvas" style="display:none;"></canvas>
+
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+
+    const params = new URLSearchParams(window.location.search);
+    const filepath = params.get('path') || '';
+    const initialNote = params.get('note') || '';
+    let burnedNote = params.get('burnedNote') || '';
+
+    const noteInput = document.getElementById('noteInput');
+    const canvas = document.getElementById('noteCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let settings = { quality: 70, maxWidth: 1024, notePrefixEnabled: false, notePrefix: '' };
+    invoke('get_settings').then(s => { settings = s; }).catch(console.error);
+
+    noteInput.value = initialNote;
+    noteInput.select();
+
+    async function burnNoteIntoImage(note) {
+      const finalNote = (settings.notePrefixEnabled && settings.notePrefix) 
+        ? settings.notePrefix + note 
+        : note;
+      const base64 = await invoke('read_original_image_base64', { filepath });
+      const wrapText = (text, maxWidth, context) => {
+        if (!text) return [''];
+
+        const words = text.split(/\s+/).filter(Boolean);
+        if (words.length === 0) return [''];
+
+        const lines = [];
+        let currentLine = '';
+
+        const splitLongWord = (word) => {
+          let segment = '';
+          for (const char of word) {
+            const testSegment = segment + char;
+            if (context.measureText(testSegment).width <= maxWidth) {
+              segment = testSegment;
+            } else {
+              if (segment) lines.push(segment);
+              segment = char;
+            }
+          }
+          return segment;
+        };
+
+        words.forEach((word) => {
+          const nextLine = currentLine ? `${currentLine} ${word}` : word;
+          if (context.measureText(nextLine).width <= maxWidth) {
+            currentLine = nextLine;
+            return;
+          }
+
+          if (currentLine) {
+            lines.push(currentLine);
+            currentLine = '';
+          }
+
+          if (context.measureText(word).width <= maxWidth) {
+            currentLine = word;
+          } else {
+            currentLine = splitLongWord(word);
+          }
+        });
+
+        if (currentLine) lines.push(currentLine);
+
+        return lines.length ? lines : [''];
+      };
+
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const MIN_NOTE_WIDTH = 400;
+          const MAX_CHAR_LIMIT = 1000;
+          const FONT_SIZE = Math.max(12, Math.min(20, img.width * 0.02));
+          const PADDING = Math.max(8, Math.min(16, img.width * 0.015));
+          const LINE_HEIGHT = 1.4;
+
+          let displayNote = finalNote;
+          if (displayNote.length > MAX_CHAR_LIMIT) {
+            displayNote = displayNote.slice(0, MAX_CHAR_LIMIT);
+          }
+
+          const effectiveWidth = Math.max(img.width, MIN_NOTE_WIDTH);
+          const availableTextWidth = effectiveWidth - PADDING * 2;
+
+          ctx.font = `${FONT_SIZE}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+          const lines = wrapText(displayNote, availableTextWidth, ctx);
+          const lineHeight = FONT_SIZE * LINE_HEIGHT;
+          const noteBarHeight = Math.ceil(lines.length * lineHeight + PADDING * 2);
+
+          canvas.width = effectiveWidth;
+          canvas.height = img.height + noteBarHeight;
+
+          const xOffset = (canvas.width - img.width) / 2;
+          if (xOffset > 0) {
+            ctx.fillStyle = '#f2f2f2';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+          }
+
+          ctx.drawImage(img, xOffset, 0, img.width, img.height);
+
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, img.height, canvas.width, noteBarHeight);
+
+          ctx.fillStyle = '#000000';
+          ctx.font = `${FONT_SIZE}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+          ctx.textBaseline = 'top';
+
+          lines.forEach((line, index) => {
+            const y = img.height + PADDING + index * lineHeight;
+            ctx.fillText(line, PADDING, y);
+          });
+          
+          const quality = settings.quality / 100;
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+          resolve(base64Data);
+        };
+        img.onerror = reject;
+        img.src = base64;
+      });
+    }
+
+    async function doSave(copyToClipboard = false) {
+      const note = noteInput.value.trim();
+      
+      if (note !== burnedNote) {
+        if (note) {
+          try {
+            const annotatedBase64 = await burnNoteIntoImage(note);
+            await invoke('save_edited_screenshot', { filepath, base64Data: annotatedBase64 });
+          } catch (e) {
+            console.error('Failed to add note:', e);
+          }
+        }
+      }
+      
+      try {
+        await invoke('delete_original_backup', { filepath });
+      } catch (e) {
+        console.error('Failed to delete backup:', e);
+      }
+      
+      if (copyToClipboard) {
+        try {
+          await invoke('copy_file_to_clipboard', { filepath });
+        } catch (e) {
+          console.error('Failed to copy to clipboard:', e);
+        }
+      }
+      
+      await invoke('close_note_popup');
+    }
+
+    async function doDelete() {
+      await invoke('delete_screenshot', { filepath });
+    }
+
+    async function doCopyAndDelete() {
+      const note = noteInput.value.trim();
+      if (note && note !== burnedNote) {
+        try {
+          const annotatedBase64 = await burnNoteIntoImage(note);
+          await invoke('save_edited_screenshot', { filepath, base64Data: annotatedBase64 });
+        } catch (e) {
+          console.error('Failed to add note:', e);
+        }
+      }
+      
+      try {
+        await invoke('copy_file_to_clipboard_cached', { filepath });
+      } catch (e) {
+        console.error('Failed to copy to clipboard:', e);
+      }
+      
+      await invoke('delete_screenshot', { filepath });
+    }
+
+    async function openEditor() {
+      const note = noteInput.value.trim();
+      await invoke('open_editor_window', { filepath, note, burned_note: burnedNote });
+    }
+
+    async function goBackToRename() {
+      const note = noteInput.value.trim();
+      await invoke('close_note_and_open_rename', { filepath, note, burned_note: burnedNote });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.metaKey) { 
+        e.preventDefault(); 
+        doSave(true); 
+      }
+      else if (e.key === 'Backspace' && e.metaKey) {
+        e.preventDefault();
+        doCopyAndDelete();
+      }
+      else if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+      else if (e.key === 'Escape') { e.preventDefault(); doDelete(); }
+      else if (e.key === 'Tab' && e.shiftKey) { 
+        e.preventDefault();
+        goBackToRename();
+      }
+      else if (e.key === 'Tab' && !e.shiftKey) { 
+        e.preventDefault();
+        openEditor();
+      }
+    });
+  </script>
+</body>
+</html>
